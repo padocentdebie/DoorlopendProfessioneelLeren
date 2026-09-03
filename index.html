@@ -6,7 +6,7 @@
     <title>Docentenoverleg Digibord</title>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update, remove, set, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, onValue, push, update, remove, set, onChildAdded, onChildChanged, onChildRemoved, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBj8dXkl1rEfyx54_MDy_tYd2P7kAeU8VQ",
@@ -53,8 +53,8 @@
         let currentRole = '';
         let slides = [];
         let currentSlideIndex = 0;
-        let notes = {};
-        let drawings = {};
+        let notes = {};          // notities voor huidige slide
+        let drawings = {};       // tekeningen voor huidige slide
         let isDrawing = false;
         let currentPathId = null;
         let draggingNote = null;
@@ -64,8 +64,8 @@
         // Dynamische refs
         let notesRef = null;
         let drawingsRef = null;
-        let notesListener = null;
-        let drawingsListener = null;
+        let notesListenerCleanup = null;
+        let drawingsListenerCleanup = null;
 
         // Initialisatie
         window.addEventListener('DOMContentLoaded', () => {
@@ -108,13 +108,11 @@
                 }
             });
 
-            // Gebruikerslijst (voor weergave en uitloggen bij reset)
+            // Gebruikerslijst
             onValue(usersRef, (snap) => {
                 const users = snap.val() || {};
-                // Toon lijst van ingelogde collega's
                 const names = Object.keys(users);
                 userInfoDiv.innerHTML = names.length > 0 ? 'Ingelogd: ' + names.join(', ') : 'Niemand ingelogd';
-                // Controleer of huidige gebruiker nog bestaat, anders uitloggen
                 if (currentUser && !users[currentUser]) {
                     currentUser = '';
                     currentRole = '';
@@ -136,22 +134,18 @@
                 alert('Voer je naam in.');
                 return;
             }
-            if (role === 'voorzitter') {
-                if (password !== 'docent') {
-                    alert('Onjuist wachtwoord voor voorzitter.');
-                    return;
-                }
+            if (role === 'voorzitter' && password !== 'docent') {
+                alert('Onjuist wachtwoord voor voorzitter.');
+                return;
             }
 
             currentUser = name;
             currentRole = role;
 
-            // Opslaan in Firebase
             const userRef = ref(db, 'docentenoverleg/users/' + name);
             set(userRef, { name: name, role: role, online: true });
             onDisconnect(userRef).remove();
 
-            // UI aanpassen
             loginModal.style.display = 'none';
             document.getElementById('user-name-display').innerText = `Ingelogd als: ${name}`;
             if (role === 'voorzitter') {
@@ -163,7 +157,6 @@
             }
         });
 
-        // Wachtwoordveld tonen/verbergen bij rolkeuze
         roleSelect.addEventListener('change', () => {
             if (roleSelect.value === 'voorzitter') {
                 passwordDiv.style.display = 'block';
@@ -214,7 +207,7 @@
             document.getElementById('next-btn').click();
         });
 
-        // ====== Slides bewerken (alleen voorzitter) ======
+        // ====== Slides bewerken (voorzitter) ======
         document.getElementById('edit-slides-btn').addEventListener('click', () => {
             const list = document.getElementById('slides-edit-list');
             list.innerHTML = '';
@@ -269,7 +262,7 @@
             set(currentSlideRef, updatedSlides.length - 1);
         });
 
-        // ====== Leader aantekeningen (alleen voorzitter) ======
+        // ====== Leader aantekeningen (voorzitter) ======
         document.getElementById('leader-notes-btn').addEventListener('click', () => {
             const textarea = document.getElementById('leader-notes-text');
             onValue(leaderNotesRef, (snap) => {
@@ -321,8 +314,8 @@
         // ====== Setup listeners per slide ======
         function setupSlideDataListeners() {
             // Oude listeners opruimen
-            if (notesListener) notesListener();
-            if (drawingsListener) drawingsListener();
+            if (notesListenerCleanup) notesListenerCleanup();
+            if (drawingsListenerCleanup) drawingsListenerCleanup();
 
             // Dynamische refs
             notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
@@ -334,44 +327,60 @@
             notes = {};
             drawings = {};
 
-            // Notities listener (onValue)
-            notesListener = onValue(notesRef, (snap) => {
+            // Notities: eerst eenmalig laden via onValue, daarna child listeners
+            let isInitialLoad = true;
+            const onNotesInitial = onValue(notesRef, (snap) => {
+                if (!isInitialLoad) return;
                 const data = snap.val() || {};
-                const dataIds = Object.keys(data);
-
-                // Verwijder notities die er niet meer zijn
-                Object.keys(notes).forEach(id => {
-                    if (!dataIds.includes(id)) {
-                        const el = document.getElementById(`note-${id}`);
-                        if (el) el.remove();
-                        delete notes[id];
-                    }
+                notesContainer.innerHTML = '';
+                notes = {};
+                Object.entries(data).forEach(([key, note]) => {
+                    note.id = key;
+                    notes[key] = note;
+                    createStickyNoteElement(note);
                 });
-
-                // Voeg nieuwe notities toe of update bestaande
-                dataIds.forEach(id => {
-                    const note = data[id];
-                    note.id = id;
-
-                    if (notes[id]) {
-                        // Bestaande notitie: update positie/kleur/tekst, maar niet tijdens slepen
-                        if (draggingNote !== id) {
-                            updateStickyNoteElement(note);
-                        }
-                        notes[id] = note;
-                    } else {
-                        // Nieuwe notitie
-                        notes[id] = note;
-                        createStickyNoteElement(note);
-                    }
-                });
+                isInitialLoad = false;
             });
 
-            // Tekeningen listener
-            drawingsListener = onValue(drawingsRef, (snap) => {
+            const onAdded = onChildAdded(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                if (!document.getElementById(`note-${note.id}`)) {
+                    createStickyNoteElement(note);
+                }
+            });
+
+            const onChanged = onChildChanged(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                updateStickyNoteElement(note);
+            });
+
+            const onRemoved = onChildRemoved(notesRef, (snap) => {
+                const noteId = snap.key;
+                delete notes[noteId];
+                const el = document.getElementById(`note-${noteId}`);
+                if (el) el.remove();
+            });
+
+            notesListenerCleanup = () => {
+                onNotesInitial();
+                onAdded();
+                onChanged();
+                onRemoved();
+            };
+
+            // Tekeningen: eenvoudig via onValue
+            const onDrawings = onValue(drawingsRef, (snap) => {
                 drawings = snap.val() || {};
                 redrawAllDrawings();
             });
+
+            drawingsListenerCleanup = () => {
+                onDrawings();
+            };
         }
 
         // Sticky note element aanmaken
@@ -473,6 +482,10 @@
             const x = (e.clientX - rect.left) * (canvas.width / rect.width) - dragOffset.x;
             const y = (e.clientY - rect.top) * (canvas.height / rect.height) - dragOffset.y;
 
+            // Update de positie in de notitie-map direct (lokaal voor soepele weergave)
+            note.x = x;
+            note.y = y;
+            // Update Firebase (beperkt tot elke beweging)
             update(notesRef, { [draggingNote]: { ...note, x, y } });
 
             const trashRect = trashZone.getBoundingClientRect();
@@ -557,8 +570,8 @@
         // ====== Reset ======
         document.getElementById('reset-btn').addEventListener('click', () => {
             if (confirm('Weet je zeker dat je ALLE gegevens wilt wissen? Iedereen wordt ook uitgelogd.')) {
-                if (notesListener) notesListener();
-                if (drawingsListener) drawingsListener();
+                if (notesListenerCleanup) notesListenerCleanup();
+                if (drawingsListenerCleanup) drawingsListenerCleanup();
                 remove(slidesRef);
                 remove(ref(db, 'docentenoverleg/notes'));
                 remove(ref(db, 'docentenoverleg/drawings'));
@@ -582,8 +595,8 @@
         // ====== Bordwisknop (alleen huidige slide) ======
         document.getElementById('clear-board-btn').addEventListener('click', () => {
             if (confirm('Wil je alle sticky notes en tekeningen op dit scherm wissen?')) {
-                if (notesListener) notesListener();
-                if (drawingsListener) drawingsListener();
+                if (notesListenerCleanup) notesListenerCleanup();
+                if (drawingsListenerCleanup) drawingsListenerCleanup();
                 remove(notesRef);
                 remove(drawingsRef);
                 notes = {};
