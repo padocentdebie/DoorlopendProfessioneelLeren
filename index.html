@@ -6,7 +6,7 @@
     <title>Docentenoverleg Digibord</title>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update, remove, set, onChildAdded, onChildChanged, onChildRemoved, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, onValue, push, update, remove, set, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBj8dXkl1rEfyx54_MDy_tYd2P7kAeU8VQ",
@@ -53,15 +53,16 @@
         let currentRole = '';
         let slides = [];
         let currentSlideIndex = 0;
-        let notes = {};
-        let drawings = {};
+        let notes = {};          // lokale kopie van notities voor huidige slide
+        let drawings = {};       // tekeningen voor huidige slide
         let isDrawing = false;
         let currentPathId = null;
         let draggingNote = null;
         let dragOffset = {x:0, y:0};
         let trashZone = document.getElementById('trash-zone');
+        let isDragging = false;   // om render te onderdrukken tijdens slepen
 
-        // Dynamische refs (worden gezet bij setup)
+        // Dynamische refs
         let notesRef = null;
         let drawingsRef = null;
 
@@ -272,7 +273,7 @@
         document.getElementById('confirm-note-btn').addEventListener('click', () => {
             const text = noteTextInput.value.trim() || 'Nieuwe notitie';
             const color = noteColorSelect.value;
-            // Zorg dat notesRef bestaat
+            // Controleer of notesRef bestaat
             if (!notesRef) {
                 notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
             }
@@ -294,8 +295,6 @@
 
         // ====== Setup listeners per slide ======
         async function setupSlideDataListeners() {
-            // Oude listeners opruimen (niet aanwezig, dus we verwijderen niets)
-
             // Dynamische refs
             notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
             drawingsRef = ref(db, `docentenoverleg/drawings/${currentSlideIndex}`);
@@ -306,64 +305,24 @@
             notes = {};
             drawings = {};
 
-            // Laad bestaande notities eenmalig via get()
-            try {
-                const notesSnap = await get(notesRef);
-                if (notesSnap.exists()) {
-                    const data = notesSnap.val();
-                    Object.entries(data).forEach(([key, note]) => {
-                        note.id = key;
-                        notes[key] = note;
-                        createStickyNoteElement(note);
-                    });
-                }
-            } catch (e) {
-                console.error('Fout bij laden notities:', e);
-            }
-
-            // Laad bestaande tekeningen eenmalig
-            try {
-                const drawingsSnap = await get(drawingsRef);
-                if (drawingsSnap.exists()) {
-                    drawings = drawingsSnap.val();
-                    redrawAllDrawings();
-                }
-            } catch (e) {
-                console.error('Fout bij laden tekeningen:', e);
-            }
-
-            // Realtime listeners
-            onChildAdded(notesRef, (snap) => {
-                const note = snap.val();
-                note.id = snap.key;
-                notes[note.id] = note;
-                if (!document.getElementById(`note-${note.id}`)) {
-                    createStickyNoteElement(note);
-                }
+            // Notities via onValue (volledige render)
+            onValue(notesRef, (snap) => {
+                if (isDragging) return; // tijdelijk stoppen met renderen tijdens slepen
+                notes = snap.val() || {};
+                renderAllNotes();
             });
 
-            onChildChanged(notesRef, (snap) => {
-                const note = snap.val();
-                note.id = snap.key;
-                notes[note.id] = note;
-                // Als deze notitie wordt gesleept, overschrijf de positie niet
-                if (draggingNote !== note.id) {
-                    updateStickyNoteElement(note);
-                }
-            });
-
-            onChildRemoved(notesRef, (snap) => {
-                const id = snap.key;
-                delete notes[id];
-                const el = document.getElementById(`note-${id}`);
-                if (el) el.remove();
-            });
-
-            // Tekeningen realtime
+            // Tekeningen via onValue
             onValue(drawingsRef, (snap) => {
                 drawings = snap.val() || {};
                 redrawAllDrawings();
             });
+        }
+
+        // ====== Render alle notities ======
+        function renderAllNotes() {
+            notesContainer.innerHTML = '';
+            Object.values(notes).forEach(note => createStickyNoteElement(note));
         }
 
         // Sticky note element aanmaken
@@ -425,20 +384,6 @@
             });
         }
 
-        function updateStickyNoteElement(note) {
-            const el = document.getElementById(`note-${note.id}`);
-            if (!el) return;
-            el.style.left = note.x + 'px';
-            el.style.top = note.y + 'px';
-            el.style.backgroundColor = note.color;
-            const textEl = el.querySelector('.note-text');
-            if (textEl.innerText !== note.text && !textEl.isContentEditable) {
-                textEl.innerText = note.text;
-            }
-            const reactionsDiv = el.querySelector('.note-reactions');
-            reactionsDiv.innerHTML = note.reactions.map(r => `<div class="reaction">${r.author}: ${r.text}</div>`).join('');
-        }
-
         // ====== Slepen ======
         function startDragging(e) {
             e.preventDefault();
@@ -448,6 +393,8 @@
             if (!note) return;
 
             draggingNote = noteId;
+            isDragging = true; // onderdruk onValue render
+
             const rect = canvas.getBoundingClientRect();
             dragOffset.x = (e.clientX - rect.left) * (canvas.width / rect.width) - note.x;
             dragOffset.y = (e.clientY - rect.top) * (canvas.height / rect.height) - note.y;
@@ -464,18 +411,17 @@
             const x = (e.clientX - rect.left) * (canvas.width / rect.width) - dragOffset.x;
             const y = (e.clientY - rect.top) * (canvas.height / rect.height) - dragOffset.y;
 
-            // Lokaal verplaatsen voor smooth weergave
+            // Lokaal verplaatsen
             const el = document.getElementById(`note-${draggingNote}`);
             if (el) {
                 el.style.left = x + 'px';
                 el.style.top = y + 'px';
             }
-
-            // Update de positie in de notitie-map (voor later)
+            // Update lokale positie voor later
             note.x = x;
             note.y = y;
 
-            // Controleer prullenbak
+            // Prullenbak detecteren
             const trashRect = trashZone.getBoundingClientRect();
             if (e.clientX > trashRect.left && e.clientX < trashRect.right && e.clientY > trashRect.top && e.clientY < trashRect.bottom) {
                 trashZone.classList.add('active');
@@ -488,16 +434,20 @@
             if (draggingNote) {
                 const note = notes[draggingNote];
                 if (note) {
-                    // Stuur update naar Firebase
-                    update(notesRef, { [draggingNote]: { ...note } });
                     // Verwijder indien in prullenbak
                     if (trashZone.classList.contains('active')) {
                         remove(notesRef, draggingNote);
+                    } else {
+                        // Update Firebase met nieuwe positie
+                        update(notesRef, { [draggingNote]: { ...note } });
                     }
                 }
             }
             draggingNote = null;
+            isDragging = false;
             trashZone.classList.remove('active');
+            // Forceer een render van alle notities om zeker te zijn
+            renderAllNotes();
         });
 
         // ====== Tekenfunctie ======
