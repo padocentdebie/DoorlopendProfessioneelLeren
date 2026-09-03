@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Docentenoverleg Digibord</title>
+    <!-- Firebase SDK v10 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, onValue, push, update, remove, set, onChildAdded, onChildChanged, onChildRemoved } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        // Firebase configuratie
+        const firebaseConfig = {
+            apiKey: "AIzaSyBj8dXkl1rEfyx54_MDy_tYd2P7kAeU8VQ",
+            authDomain: "q2les3samirgem.firebaseapp.com",
+            databaseURL: "https://q2les3samirgem-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "q2les3samirgem",
+            storageBucket: "q2les3samirgem.firebasestorage.app",
+            messagingSenderId: "8681998187",
+            appId: "1:8681998187:web:fd08067494a010dc572e2e"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Vaste referenties
+        const meetingRef = ref(db, 'docentenoverleg');
+        const slidesRef = ref(db, 'docentenoverleg/slides');
+        const currentSlideRef = ref(db, 'docentenoverleg/currentSlide');
+        const notesRef = ref(db, 'docentenoverleg/notes');
+        const leaderNotesRef = ref(db, 'docentenoverleg/leaderNotes');
+        const drawingsRef = ref(db, 'docentenoverleg/drawings');
+
+        // ====== UI-elementen ======
+        const statusLabel = document.getElementById('status');
+        const slideDisplay = document.getElementById('slide-content');
+        const currentSlideIndicator = document.getElementById('current-slide');
+        const userNameInput = document.getElementById('user-name-input');
+        const loginModal = document.getElementById('login-modal');
+        const editSlidesModal = document.getElementById('edit-slides-modal');
+        const leaderNotesModal = document.getElementById('leader-notes-modal');
+        const notesContainer = document.getElementById('notes-container');
+        const canvas = document.getElementById('drawing-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // ====== Globale variabelen ======
+        let currentUser = '';
+        let slides = [];           // array van {title, content}
+        let currentSlideIndex = 0;
+        let notes = {};            // object met note id => {id, text, x, y, color, author, reactions}
+        let drawings = {};         // object met path id => {id, points}
+        let isDrawing = false;
+        let currentPathId = null;
+        let draggingNote = null;
+        let dragOffset = {x:0, y:0};
+        let trashZone = document.getElementById('trash-zone');
+
+        // ====== Initialisatie ======
+        window.addEventListener('DOMContentLoaded', () => {
+            // Toon login modal
+            loginModal.style.display = 'flex';
+
+            // Luister naar connectie
+            onValue(ref(db, '.info/connected'), (snap) => {
+                if (snap.val()) {
+                    statusLabel.innerText = '● LIVE';
+                    statusLabel.classList.add('online');
+                } else {
+                    statusLabel.innerText = '● OFFLINE';
+                    statusLabel.classList.remove('online');
+                }
+            });
+
+            // Laad slides
+            onValue(slidesRef, (snap) => {
+                slides = snap.val() || [];
+                if (slides.length === 0) {
+                    // Initialiseer standaard slides
+                    const defaultSlides = [
+                        { title: 'Doel', content: '' },
+                        { title: 'Context', content: '' },
+                        { title: 'Werkwijze', content: '' },
+                        { title: 'Opdracht', content: '' }
+                    ];
+                    set(slidesRef, defaultSlides);
+                }
+            });
+
+            // Laad huidige slide index
+            onValue(currentSlideRef, (snap) => {
+                currentSlideIndex = snap.val() || 0;
+                updateSlideDisplay();
+            });
+
+            // Laad sticky notes (met child listeners voor individuele updates)
+            onChildAdded(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                createStickyNoteElement(note);
+            });
+            onChildChanged(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                updateStickyNoteElement(note);
+            });
+            onChildRemoved(notesRef, (snap) => {
+                const noteId = snap.key;
+                delete notes[noteId];
+                removeStickyNoteElement(noteId);
+            });
+
+            // Laad tekeningen (paden)
+            onChildAdded(drawingsRef, (snap) => {
+                const path = snap.val();
+                path.id = snap.key;
+                drawings[path.id] = path;
+                drawPath(path);
+            });
+            onChildRemoved(drawingsRef, (snap) => {
+                const pathId = snap.key;
+                delete drawings[pathId];
+                // Herteken alles (eenvoudig)
+                redrawAllDrawings();
+            });
+
+            // Laad leader notes
+            onValue(leaderNotesRef, (snap) => {
+                // We slaan op als object {slideIndex: tekst}
+                // We vullen het textarea in de leader notes modal
+                const notes = snap.val() || {};
+                const textarea = document.getElementById('leader-notes-text');
+                textarea.value = notes[currentSlideIndex] || '';
+            });
+        });
+
+        // ====== Login ======
+        document.getElementById('login-btn').addEventListener('click', () => {
+            const name = userNameInput.value.trim();
+            if (name) {
+                currentUser = name;
+                loginModal.style.display = 'none';
+                document.getElementById('user-name-display').innerText = `Ingelogd als: ${currentUser}`;
+            } else {
+                alert('Voer je naam in.');
+            }
+        });
+
+        // ====== Slide weergave ======
+        function updateSlideDisplay() {
+            const slide = slides[currentSlideIndex];
+            if (slide) {
+                slideDisplay.innerHTML = `<h2>${slide.title}</h2><p>${slide.content}</p>`;
+                currentSlideIndicator.innerText = `Slide ${currentSlideIndex + 1} / ${slides.length}`;
+            } else {
+                slideDisplay.innerHTML = '<h2>Geen slide</h2>';
+                currentSlideIndicator.innerText = `Slide 0 / 0`;
+            }
+        }
+
+        // ====== Volgende / Vorige knoppen ======
+        document.getElementById('next-btn').addEventListener('click', () => {
+            if (currentSlideIndex < slides.length - 1) {
+                set(currentSlideRef, currentSlideIndex + 1);
+            }
+        });
+        document.getElementById('prev-btn').addEventListener('click', () => {
+            if (currentSlideIndex > 0) {
+                set(currentSlideRef, currentSlideIndex - 1);
+            }
+        });
+
+        // Knop op het digibord "Naar volgend scherm"
+        document.getElementById('next-screen-btn').addEventListener('click', () => {
+            document.getElementById('next-btn').click();
+        });
+
+        // ====== Slides bewerken ======
+        document.getElementById('edit-slides-btn').addEventListener('click', () => {
+            const modal = editSlidesModal;
+            const list = document.getElementById('slides-edit-list');
+            list.innerHTML = '';
+            slides.forEach((slide, index) => {
+                const div = document.createElement('div');
+                div.className = 'slide-edit-item';
+                div.innerHTML = `
+                    <input type="text" id="title-${index}" value="${slide.title}" placeholder="Titel">
+                    <textarea id="content-${index}" placeholder="Inhoud">${slide.content}</textarea>
+                    <button onclick="removeSlide(${index})">Verwijder</button>
+                `;
+                list.appendChild(div);
+            });
+            modal.style.display = 'flex';
+        });
+
+        document.getElementById('save-slides-btn').addEventListener('click', () => {
+            const newSlides = [];
+            const listItems = document.querySelectorAll('.slide-edit-item');
+            listItems.forEach((item, index) => {
+                const title = document.getElementById(`title-${index}`).value.trim();
+                const content = document.getElementById(`content-${index}`).value.trim();
+                newSlides.push({ title, content });
+            });
+            set(slidesRef, newSlides);
+            editSlidesModal.style.display = 'none';
+        });
+
+        document.getElementById('add-slide-btn').addEventListener('click', () => {
+            const list = document.getElementById('slides-edit-list');
+            const index = list.children.length;
+            const div = document.createElement('div');
+            div.className = 'slide-edit-item';
+            div.innerHTML = `
+                <input type="text" id="title-${index}" placeholder="Titel">
+                <textarea id="content-${index}" placeholder="Inhoud"></textarea>
+                <button onclick="removeSlide(${index})">Verwijder</button>
+            `;
+            list.appendChild(div);
+        });
+
+        window.removeSlide = (index) => {
+            const list = document.getElementById('slides-edit-list');
+            if (list.children[index]) {
+                list.children[index].remove();
+            }
+        };
+
+        // ====== Leader aantekeningen ======
+        document.getElementById('leader-notes-btn').addEventListener('click', () => {
+            const textarea = document.getElementById('leader-notes-text');
+            textarea.value = (leaderNotes.currentSlideIndex) || '';
+            leaderNotesModal.style.display = 'flex';
+        });
+
+        document.getElementById('save-leader-notes-btn').addEventListener('click', () => {
+            const text = document.getElementById('leader-notes-text').value;
+            const updateObj = {};
+            updateObj[currentSlideIndex] = text;
+            update(leaderNotesRef, updateObj);
+            leaderNotesModal.style.display = 'none';
+        });
+
+        document.getElementById('close-leader-notes-btn').addEventListener('click', () => {
+            leaderNotesModal.style.display = 'none';
+        });
+
+        // ====== Sticky notes ======
+        document.getElementById('add-note-btn').addEventListener('click', () => {
+            const color = document.querySelector('input[name="note-color"]:checked').value;
+            const noteRef = push(notesRef);
+            const note = {
+                text: 'Nieuwe notitie',
+                x: 200 + Math.random() * 300,
+                y: 200 + Math.random() * 300,
+                color: color,
+                author: currentUser,
+                reactions: []
+            };
+            set(noteRef, note);
+        });
+
+        // Kleur selectie werkbalk
+        // De kleuren worden via radio buttons gekozen
+
+        // Sticky note DOM elementen aanmaken / updaten / verwijderen
+        function createStickyNoteElement(note) {
+            const el = document.createElement('div');
+            el.className = 'sticky-note';
+            el.id = `note-${note.id}`;
+            el.style.left = note.x + 'px';
+            el.style.top = note.y + 'px';
+            el.style.backgroundColor = note.color;
+            el.dataset.author = note.author;
+            el.innerHTML = `
+                <div class="note-header">
+                    <span class="note-author">${note.author}</span>
+                    <span class="note-color-picker">
+                        <span class="color-dot green" data-color="green"></span>
+                        <span class="color-dot red" data-color="red"></span>
+                        <span class="color-dot blue" data-color="blue"></span>
+                    </span>
+                    <span class="note-delete" title="Verwijder">×</span>
+                </div>
+                <div class="note-text" contenteditable="true">${note.text}</div>
+                <div class="note-reactions">
+                    ${note.reactions.map(r => `<div class="reaction">${r.author}: ${r.text}</div>`).join('')}
+                </div>
+                <div class="reaction-input">
+                    <input type="text" placeholder="Reageer...">
+                    <button>OK</button>
+                </div>
+            `;
+            notesContainer.appendChild(el);
+
+            // Voeg event listeners toe
+            // Slepen
+            el.addEventListener('pointerdown', startDragging);
+            // Tekst aanpassen
+            el.querySelector('.note-text').addEventListener('input', (e) => {
+                const newText = e.target.innerText;
+                update(notesRef, { [note.id]: { ...note, text: newText } });
+            });
+            // Kleur wijzigen
+            el.querySelectorAll('.color-dot').forEach(dot => {
+                dot.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const color = dot.dataset.color;
+                    update(notesRef, { [note.id]: { ...note, color } });
+                });
+            });
+            // Verwijderen
+            el.querySelector('.note-delete').addEventListener('click', (e) => {
+                e.stopPropagation();
+                remove(notesRef, note.id);
+            });
+            // Reactie toevoegen
+            const reactionInput = el.querySelector('.reaction-input input');
+            const reactionBtn = el.querySelector('.reaction-input button');
+            reactionBtn.addEventListener('click', () => {
+                const text = reactionInput.value.trim();
+                if (text) {
+                    const newReactions = [...note.reactions, { author: currentUser, text }];
+                    update(notesRef, { [note.id]: { ...note, reactions: newReactions } });
+                    reactionInput.value = '';
+                }
+            });
+        }
+
+        function updateStickyNoteElement(note) {
+            const el = document.getElementById(`note-${note.id}`);
+            if (!el) return;
+            // Update positie
+            el.style.left = note.x + 'px';
+            el.style.top = note.y + 'px';
+            // Update kleur
+            el.style.backgroundColor = note.color;
+            // Update tekst (alleen als niet aan het typen)
+            const textEl = el.querySelector('.note-text');
+            if (textEl.innerText !== note.text && !textEl.isContentEditable) {
+                textEl.innerText = note.text;
+            }
+            // Update reacties
+            const reactionsDiv = el.querySelector('.note-reactions');
+            reactionsDiv.innerHTML = note.reactions.map(r => `<div class="reaction">${r.author}: ${r.text}</div>`).join('');
+        }
+
+        function removeStickyNoteElement(noteId) {
+            const el = document.getElementById(`note-${noteId}`);
+            if (el) el.remove();
+        }
+
+        // ====== Slepen van sticky notes ======
+        function startDragging(e) {
+            e.preventDefault();
+            const el = e.currentTarget;
+            const noteId = el.id.replace('note-', '');
+            const note = notes[noteId];
+            if (!note) return;
+
+            draggingNote = noteId;
+            const rect = canvas.getBoundingClientRect();
+            dragOffset.x = (e.clientX - rect.left) * (canvas.width / rect.width) - note.x;
+            dragOffset.y = (e.clientY - rect.top) * (canvas.height / rect.height) - note.y;
+
+            el.setPointerCapture(e.pointerId);
+        }
+
+        window.addEventListener('pointermove', (e) => {
+            if (!draggingNote) return;
+            const note = notes[draggingNote];
+            if (!note) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width) - dragOffset.x;
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height) - dragOffset.y;
+
+            // Update Firebase (beperk frequentie)
+            update(notesRef, { [draggingNote]: { ...note, x, y } });
+
+            // Trash zone check
+            const trashRect = trashZone.getBoundingClientRect();
+            if (e.clientX > trashRect.left && e.clientX < trashRect.right && e.clientY > trashRect.top && e.clientY < trashRect.bottom) {
+                trashZone.classList.add('active');
+            } else {
+                trashZone.classList.remove('active');
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            if (draggingNote && trashZone.classList.contains('active')) {
+                remove(notesRef, draggingNote);
+            }
+            draggingNote = null;
+            trashZone.classList.remove('active');
+        });
+
+        // ====== Tekenfunctie (vrij tekenen) ======
+        // Afhandeling van tekenen op canvas (alleen als niet op sticky note)
+        canvas.addEventListener('pointerdown', (e) => {
+            // Alleen tekenen als niet op een sticky note
+            if (e.target === canvas) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                const newPathRef = push(drawingsRef);
+                currentPathId = newPathRef.key;
+                const path = { points: [{ x, y }] };
+                set(newPathRef, path);
+                isDrawing = true;
+            }
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!isDrawing || !currentPathId) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            const path = drawings[currentPathId];
+            if (path && path.points) {
+                const last = path.points[path.points.length - 1];
+                if (Math.hypot(x - last.x, y - last.y) > 5) {
+                    const newPoints = [...path.points, { x, y }];
+                    update(drawingsRef, { [currentPathId]: { points: newPoints } });
+                }
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            isDrawing = false;
+            currentPathId = null;
+        });
+
+        // Teken opgeslagen paden op canvas
+        function drawPath(path) {
+            ctx.strokeStyle = '#4b5563';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(path.points[0].x, path.points[0].y);
+            path.points.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.stroke();
+        }
+
+        function redrawAllDrawings() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            Object.values(drawings).forEach(path => drawPath(path));
+        }
+
+        // ====== Download / Print PDF ======
+        document.getElementById('print-btn').addEventListener('click', () => {
+            // Toon printmodus
+            document.body.classList.add('print-mode');
+            // Zet canvas om naar afbeelding zodat die geprint wordt
+            const canvasImg = canvas.toDataURL('image/png');
+            const img = document.createElement('img');
+            img.src = canvasImg;
+            img.id = 'canvas-print-img';
+            img.style.width = '100%';
+            // Voeg toe aan print container
+            document.getElementById('print-area').appendChild(img);
+            // Print
+            window.print();
+            // Verwijder img na print
+            document.body.classList.remove('print-mode');
+            document.getElementById('print-area').innerHTML = '';
+        });
+
+        // ====== Reset knop (alles wissen) ======
+        document.getElementById('reset-btn').addEventListener('click', () => {
+            if (confirm('Weet je zeker dat je alle gegevens wilt wissen? Dit kan niet ongedaan worden gemaakt.')) {
+                // Verwijder alle data
+                remove(slidesRef);
+                remove(notesRef);
+                remove(drawingsRef);
+                remove(leaderNotesRef);
+                set(currentSlideRef, 0);
+            }
+        });
+
+        // ====== Sluit modals bij klik buiten ======
+        window.onclick = function(event) {
+            if (event.target === loginModal) loginModal.style.display = 'none';
+            if (event.target === editSlidesModal) editSlidesModal.style.display = 'none';
+            if (event.target === leaderNotesModal) leaderNotesModal.style.display = 'none';
+        };
+
+    </script>
+
+    <style>
+        /* Global reset */
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #e0e7ff, #f0f2f5);
+            margin: 0;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            background: #1e3a8a;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 60px;
+            z-index: 200;
+        }
+        header h1 { margin: 0; font-size: 1.3rem; }
+        .header-controls { display: flex; gap: 10px; align-items: center; }
+        .btn {
+            background: #3b82f6;
+            border: none;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        .btn:hover { background: #2563eb; }
+        .btn.secondary { background: #6b7280; }
+        .btn.red { background: #dc2626; }
+        .btn.green { background: #16a34a; }
+
+        /* Main lay-out */
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            gap: 10px;
+            min-height: 0;
+        }
+
+        /* Slide display */
+        .slide-display {
+            background: #ffffff;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            min-height: 120px;
+        }
+        .slide-display h2 { margin-top: 0; color: #1e3a8a; }
+        .slide-display p { font-size: 1.2rem; }
+
+        .slide-nav {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        /* Digibord area */
+        .digibord {
+            flex: 1;
+            position: relative;
+            background: #ffffff;
+            border-radius: 10px;
+            border: 3px solid #1e3a8a;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            overflow: hidden;
+            touch-action: none;
+            min-height: 300px;
+        }
+
+        /* Canvas en notes container */
+        #drawing-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        #notes-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* zodat canvas eronder kan tekenen, maar we schakelen per note aan */
+        }
+
+        /* Sticky note */
+        .sticky-note {
+            position: absolute;
+            width: 200px;
+            min-height: 150px;
+            background: #fef08a;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            padding: 10px;
+            pointer-events: auto;
+            cursor: move;
+            display: flex;
+            flex-direction: column;
+            font-size: 14px;
+        }
+        .note-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .note-author {
+            font-weight: bold;
+            font-size: 0.9em;
+            background: rgba(0,0,0,0.1);
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .note-color-picker { display: flex; gap: 4px; }
+        .color-dot {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 1px solid #ccc;
+        }
+        .color-dot.green { background: #22c55e; }
+        .color-dot.red { background: #ef4444; }
+        .color-dot.blue { background: #3b82f6; }
+        .note-delete {
+            cursor: pointer;
+            color: #888;
+            font-size: 18px;
+            line-height: 1;
+        }
+        .note-delete:hover { color: red; }
+        .note-text {
+            flex: 1;
+            outline: none;
+            word-wrap: break-word;
+            margin-bottom: 5px;
+        }
+        .note-reactions {
+            background: rgba(255,255,255,0.6);
+            border-radius: 5px;
+            padding: 5px;
+            max-height: 80px;
+            overflow-y: auto;
+            margin-bottom: 5px;
+        }
+        .reaction { font-size: 0.85em; }
+        .reaction-input {
+            display: flex;
+            gap: 5px;
+            margin-top: 5px;
+        }
+        .reaction-input input {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 4px;
+            font-size: 12px;
+        }
+        .reaction-input button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 0 8px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        /* Trash zone */
+        #trash-zone {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 60px;
+            height: 60px;
+            background: #fee2e2;
+            border: 2px dashed #ef4444;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            opacity: 0.7;
+            transition: 0.2s;
+            z-index: 10;
+            pointer-events: auto;
+        }
+        #trash-zone.active {
+            transform: scale(1.1);
+            background: #ef4444;
+            opacity: 1;
+            border-style: solid;
+            color: white;
+        }
+
+        /* Toolbar onderaan digibord */
+        .digibord-toolbar {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.95);
+            border-radius: 30px;
+            padding: 8px 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            z-index: 20;
+        }
+        .digibord-toolbar button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 5px;
+        }
+        .digibord-toolbar button:hover { background: #e5e7eb; border-radius: 50%; }
+        .color-options {
+            display: flex;
+            gap: 5px;
+        }
+        .color-options input[type="radio"] {
+            display: none;
+        }
+        .color-options label {
+            width: 25px;
+            height: 25px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: inline-block;
+            border: 2px solid transparent;
+            transition: 0.2s;
+        }
+        .color-options input:checked + label {
+            border-color: #333;
+            transform: scale(1.1);
+        }
+        .color-options label.green { background: #22c55e; }
+        .color-options label.red { background: #ef4444; }
+        .color-options label.blue { background: #3b82f6; }
+
+        /* Knoppen in header */
+        #status {
+            font-size: 0.9rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: #eee;
+        }
+        #status.online { background: #ebffed; color: #2e7d32; }
+
+        /* Modals */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 300;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .modal-content h2 { margin-top: 0; }
+
+        .slide-edit-item {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+        }
+        .slide-edit-item input, .slide-edit-item textarea {
+            width: 100%;
+            margin-bottom: 5px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .slide-edit-item textarea { height: 60px; }
+
+        /* Print mode */
+        .print-mode .header-controls,
+        .print-mode .slide-nav,
+        .print-mode .digibord-toolbar,
+        .print-mode .modal,
+        .print-mode #trash-zone,
+        .print-mode .note-reactions .reaction-input,
+        .print-mode .note-color-picker,
+        .print-mode .note-delete {
+            display: none !important;
+        }
+        .print-mode .digibord {
+            border: 1px solid #ccc;
+            box-shadow: none;
+        }
+        .print-mode #print-area {
+            display: block;
+            padding: 20px;
+        }
+        #print-area {
+            display: none;
+        }
+        /* In print: toon alle slides en bord */
+        @media print {
+            .main-container {
+                display: block;
+                padding: 0;
+            }
+            .slide-display {
+                page-break-after: always;
+                border: 1px solid #ccc;
+                margin-bottom: 20px;
+            }
+            .digibord {
+                page-break-after: always;
+                border: 2px solid #333;
+            }
+            #canvas-print-img {
+                width: 100%;
+            }
+            .sticky-note {
+                break-inside: avoid;
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .digibord { height: 60vh !important; }
+            .slide-display { min-height: 80px; }
+            .sticky-note { width: 160px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+    <h1>📋 Docentenoverleg Digibord</h1>
+    <div class="header-controls">
+        <span id="status">Status: Laden...</span>
+        <button id="edit-slides-btn" class="btn">✏️ Slides bewerken</button>
+        <button id="leader-notes-btn" class="btn secondary">📝 Aantekeningen</button>
+        <button id="print-btn" class="btn green">🖨️ Download PDF</button>
+        <button id="reset-btn" class="btn red">🗑️ Reset</button>
+        <span id="user-name-display" style="font-size: 0.9rem;"></span>
+    </div>
+</header>
+
+<!-- Main container -->
+<div class="main-container">
+    <!-- Slide display -->
+    <div class="slide-display">
+        <div id="slide-content"></div>
+        <div class="slide-nav">
+            <button id="prev-btn" class="btn secondary">← Vorige</button>
+            <span id="current-slide" style="font-weight: bold; margin: 0 10px;"></span>
+            <button id="next-btn" class="btn">Volgende →</button>
+        </div>
+    </div>
+
+    <!-- Digibord -->
+    <div class="digibord">
+        <canvas id="drawing-canvas" width="1200" height="800"></canvas>
+        <div id="notes-container"></div>
+        <div id="trash-zone">🗑️</div>
+        <div class="digibord-toolbar">
+            <button id="add-note-btn" title="Nieuwe sticky">📌</button>
+            <div class="color-options">
+                <input type="radio" name="note-color" id="color-green" value="green" checked>
+                <label for="color-green" class="green"></label>
+                <input type="radio" name="note-color" id="color-red" value="red">
+                <label for="color-red" class="red"></label>
+                <input type="radio" name="note-color" id="color-blue" value="blue">
+                <label for="color-blue" class="blue"></label>
+            </div>
+            <span style="border-left: 1px solid #ccc; height: 20px;"></span>
+            <button id="next-screen-btn" title="Volgend scherm">⏭️</button>
+        </div>
+    </div>
+</div>
+
+<!-- Login modal -->
+<div id="login-modal" class="modal" style="display: flex;">
+    <div class="modal-content" style="max-width: 400px;">
+        <h2>Welkom!</h2>
+        <p>Voer je naam in om deel te nemen.</p>
+        <input type="text" id="user-name-input" placeholder="Je naam" style="width: 100%; padding: 10px; margin-bottom: 10px;">
+        <button id="login-btn" class="btn" style="width: 100%;">Start</button>
+    </div>
+</div>
+
+<!-- Edit slides modal -->
+<div id="edit-slides-modal" class="modal">
+    <div class="modal-content">
+        <h2>Bewerk slides</h2>
+        <div id="slides-edit-list"></div>
+        <button id="add-slide-btn" class="btn secondary">+ Nieuwe slide</button>
+        <div style="text-align: right; margin-top: 10px;">
+            <button id="save-slides-btn" class="btn">Opslaan</button>
+            <button class="btn secondary" onclick="document.getElementById('edit-slides-modal').style.display='none'">Annuleren</button>
+        </div>
+    </div>
+</div>
+
+<!-- Leader notes modal -->
+<div id="leader-notes-modal" class="modal">
+    <div class="modal-content">
+        <h2>Aantekeningen voor huidige slide</h2>
+        <textarea id="leader-notes-text" style="width: 100%; height: 200px; margin-bottom: 10px;" placeholder="Schrijf hier je aantekeningen..."></textarea>
+        <div style="text-align: right;">
+            <button id="save-leader-notes-btn" class="btn">Opslaan</button>
+            <button id="close-leader-notes-btn" class="btn secondary">Sluiten</button>
+        </div>
+    </div>
+</div>
+
+<!-- Print area (verborgen in normale modus) -->
+<div id="print-area"></div>
+
+</body>
+</html>
