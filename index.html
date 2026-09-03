@@ -8,7 +8,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getDatabase, ref, onValue, push, update, remove, set, onChildAdded, onChildChanged, onChildRemoved, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-        // Firebase configuratie
         const firebaseConfig = {
             apiKey: "AIzaSyBj8dXkl1rEfyx54_MDy_tYd2P7kAeU8VQ",
             authDomain: "q2les3samirgem.firebaseapp.com",
@@ -22,12 +21,10 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Referenties
+        // Basisingen
         const slidesRef = ref(db, 'docentenoverleg/slides');
         const currentSlideRef = ref(db, 'docentenoverleg/currentSlide');
-        const notesRef = ref(db, 'docentenoverleg/notes');
         const leaderNotesRef = ref(db, 'docentenoverleg/leaderNotes');
-        const drawingsRef = ref(db, 'docentenoverleg/drawings');
         const usersRef = ref(db, 'docentenoverleg/users');
 
         // UI-elementen
@@ -49,13 +46,19 @@
         let currentUser = '';
         let slides = [];
         let currentSlideIndex = 0;
-        let notes = {};
-        let drawings = {};
+        let notes = {};          // notities voor huidige slide
+        let drawings = {};       // tekeningen voor huidige slide
         let isDrawing = false;
         let currentPathId = null;
         let draggingNote = null;
         let dragOffset = {x:0, y:0};
         let trashZone = document.getElementById('trash-zone');
+
+        // Referenties voor huidige slide (dynamisch)
+        let notesRef = null;
+        let drawingsRef = null;
+        let notesListenerCleanup = null;
+        let drawingsListenerCleanup = null;
 
         // Initialisatie
         window.addEventListener('DOMContentLoaded', () => {
@@ -85,43 +88,22 @@
                 }
             });
 
-            // Huidige slide
+            // Huidige slide index
             onValue(currentSlideRef, (snap) => {
-                currentSlideIndex = snap.val() || 0;
-                updateSlideDisplay();
-            });
-
-            // Notities laden - alleen via child listeners (geen onValue meer)
-            onChildAdded(notesRef, (snap) => {
-                const note = snap.val();
-                note.id = snap.key;
-                notes[note.id] = note;
-                if (!document.getElementById(`note-${note.id}`)) {
-                    createStickyNoteElement(note);
+                const newIndex = snap.val() || 0;
+                if (newIndex !== currentSlideIndex) {
+                    currentSlideIndex = newIndex;
+                    // Set up nieuwe listeners voor deze slide
+                    setupSlideDataListeners();
+                    updateSlideDisplay();
+                } else {
+                    // Eerste keer ook setup doen
+                    setupSlideDataListeners();
+                    updateSlideDisplay();
                 }
             });
 
-            onChildChanged(notesRef, (snap) => {
-                const note = snap.val();
-                note.id = snap.key;
-                notes[note.id] = note;
-                updateStickyNoteElement(note);
-            });
-
-            onChildRemoved(notesRef, (snap) => {
-                const noteId = snap.key;
-                delete notes[noteId];
-                const el = document.getElementById(`note-${noteId}`);
-                if (el) el.remove();
-            });
-
-            // Tekeningen laden
-            onValue(drawingsRef, (snap) => {
-                drawings = snap.val() || {};
-                redrawAllDrawings();
-            });
-
-            // Gebruikerslijst (uitloggen bij reset)
+            // Gebruikerslijst
             onValue(usersRef, (snap) => {
                 const users = snap.val() || {};
                 if (currentUser && !users[currentUser]) {
@@ -131,6 +113,76 @@
                 }
             });
         });
+
+        // ====== Slide-data listeners ======
+        function setupSlideDataListeners() {
+            // Oude listeners opruimen
+            if (notesListenerCleanup) notesListenerCleanup();
+            if (drawingsListenerCleanup) drawingsListenerCleanup();
+
+            // Dynamische refs
+            notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
+            drawingsRef = ref(db, `docentenoverleg/drawings/${currentSlideIndex}`);
+
+            // Lege containers
+            notesContainer.innerHTML = '';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            notes = {};
+            drawings = {};
+
+            // Notities: eerst alle bestaande laden (eenmalig), daarna luisteren
+            const onNotesLoad = onValue(notesRef, (snap) => {
+                notes = snap.val() || {};
+                // Elementen opnieuw maken (eerst legen)
+                notesContainer.innerHTML = '';
+                Object.values(notes).forEach(note => {
+                    if (!document.getElementById(`note-${note.id}`)) {
+                        createStickyNoteElement(note);
+                    }
+                });
+            });
+
+            // Daarna child listeners voor realtime
+            const onAdded = onChildAdded(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                if (!document.getElementById(`note-${note.id}`)) {
+                    createStickyNoteElement(note);
+                }
+            });
+
+            const onChanged = onChildChanged(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                updateStickyNoteElement(note);
+            });
+
+            const onRemoved = onChildRemoved(notesRef, (snap) => {
+                const noteId = snap.key;
+                delete notes[noteId];
+                const el = document.getElementById(`note-${noteId}`);
+                if (el) el.remove();
+            });
+
+            notesListenerCleanup = () => {
+                onNotesLoad();
+                onAdded();
+                onChanged();
+                onRemoved();
+            };
+
+            // Tekeningen: éénmalig laden en realtime via onValue (eenvoudig)
+            const onDrawings = onValue(drawingsRef, (snap) => {
+                drawings = snap.val() || {};
+                redrawAllDrawings();
+            });
+
+            drawingsListenerCleanup = () => {
+                onDrawings();
+            };
+        }
 
         // ====== Login ======
         document.getElementById('login-btn').addEventListener('click', () => {
@@ -234,7 +286,7 @@
             if (list.children[index]) list.children[index].remove();
         };
 
-        // ====== Nieuw scherm (slide) toevoegen vanuit digibord ======
+        // ====== Nieuw scherm ======
         document.getElementById('add-screen-btn').addEventListener('click', () => {
             const newSlide = { title: 'Nieuw scherm', content: '' };
             const updatedSlides = [...slides, newSlide];
@@ -283,9 +335,8 @@
                 author: currentUser,
                 reactions: []
             };
-            // Zet de notitie in Firebase
             set(noteRef, note);
-            // Voeg de notitie ook direct lokaal toe voor snelle weergave
+            // Lokaal direct toevoegen voor snelle feedback
             note.id = noteRef.key;
             notes[note.id] = note;
             if (!document.getElementById(`note-${note.id}`)) {
@@ -298,7 +349,7 @@
             noteModal.style.display = 'none';
         });
 
-        // Sticky note elementen (aanmaken)
+        // Sticky note elementen
         function createStickyNoteElement(note) {
             const el = document.createElement('div');
             el.className = 'sticky-note';
@@ -357,7 +408,6 @@
             });
         }
 
-        // Update bestaande notitie
         function updateStickyNoteElement(note) {
             const el = document.getElementById(`note-${note.id}`);
             if (!el) return;
@@ -372,7 +422,7 @@
             reactionsDiv.innerHTML = note.reactions.map(r => `<div class="reaction">${r.author}: ${r.text}</div>`).join('');
         }
 
-        // ====== Slepen van sticky notes ======
+        // ====== Slepen ======
         function startDragging(e) {
             e.preventDefault();
             const el = e.currentTarget;
@@ -478,30 +528,35 @@
             document.getElementById('print-area').innerHTML = '';
         });
 
-        // ====== Reset functionaliteit ======
+        // ====== Reset ======
         document.getElementById('reset-btn').addEventListener('click', () => {
             if (confirm('Weet je zeker dat je ALLE gegevens wilt wissen? Iedereen wordt ook uitgelogd.')) {
                 remove(slidesRef);
-                remove(notesRef);
-                remove(drawingsRef);
+                remove(ref(db, 'docentenoverleg/notes'));
+                remove(ref(db, 'docentenoverleg/drawings'));
                 remove(leaderNotesRef);
                 remove(usersRef);
                 set(currentSlideRef, 0);
-                // Lokale state wissen
                 currentUser = '';
                 document.getElementById('user-name-display').innerText = '';
                 loginModal.style.display = 'flex';
+                // Lokale state wissen
+                notes = {};
+                drawings = {};
+                notesContainer.innerHTML = '';
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                setupSlideDataListeners();
             }
         });
 
         document.getElementById('clear-board-btn').addEventListener('click', () => {
-            if (confirm('Wil je alle sticky notes en tekeningen wissen?')) {
+            if (confirm('Wil je alle sticky notes en tekeningen op dit scherm wissen?')) {
                 remove(notesRef);
                 remove(drawingsRef);
             }
         });
 
-        // ====== Sluit modals bij klik buiten ======
+        // ====== Sluit modals ======
         window.onclick = function(event) {
             if (event.target === loginModal) loginModal.style.display = 'none';
             if (event.target === editSlidesModal) editSlidesModal.style.display = 'none';
@@ -698,7 +753,7 @@
             <button id="add-screen-btn" title="Nieuw scherm toevoegen">
                 <span>➕</span> Nieuw scherm
             </button>
-            <button id="clear-board-btn" title="Wis sticky notes en tekeningen">
+            <button id="clear-board-btn" title="Wis sticky notes en tekeningen van dit scherm">
                 <span>🧹</span> Wis bord
             </button>
         </div>
