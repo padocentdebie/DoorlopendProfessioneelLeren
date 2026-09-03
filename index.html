@@ -6,7 +6,7 @@
     <title>Docentenoverleg Digibord</title>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update, remove, set, onChildAdded, onChildChanged, onChildRemoved, onDisconnect, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, onValue, push, update, remove, set, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBj8dXkl1rEfyx54_MDy_tYd2P7kAeU8VQ",
@@ -21,7 +21,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Basisingen
+        // Referenties
         const slidesRef = ref(db, 'docentenoverleg/slides');
         const currentSlideRef = ref(db, 'docentenoverleg/currentSlide');
         const leaderNotesRef = ref(db, 'docentenoverleg/leaderNotes');
@@ -54,11 +54,11 @@
         let dragOffset = {x:0, y:0};
         let trashZone = document.getElementById('trash-zone');
 
-        // Referenties voor huidige slide (dynamisch)
+        // Dynamische refs
         let notesRef = null;
         let drawingsRef = null;
-        let notesListenerCleanup = null;
-        let drawingsListenerCleanup = null;
+        let notesListener = null;
+        let drawingsListener = null;
 
         // Initialisatie
         window.addEventListener('DOMContentLoaded', () => {
@@ -88,7 +88,7 @@
                 }
             });
 
-            // Huidige slide index
+            // Huidige slide
             onValue(currentSlideRef, (snap) => {
                 const newIndex = snap.val() || 0;
                 if (newIndex !== currentSlideIndex) {
@@ -96,7 +96,6 @@
                     setupSlideDataListeners();
                     updateSlideDisplay();
                 } else {
-                    // Eerste keer ook setup doen
                     setupSlideDataListeners();
                     updateSlideDisplay();
                 }
@@ -114,10 +113,10 @@
         });
 
         // ====== Slide-data listeners ======
-        async function setupSlideDataListeners() {
+        function setupSlideDataListeners() {
             // Oude listeners opruimen
-            if (notesListenerCleanup) notesListenerCleanup();
-            if (drawingsListenerCleanup) drawingsListenerCleanup();
+            if (notesListener) notesListener();
+            if (drawingsListener) drawingsListener();
 
             // Dynamische refs
             notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
@@ -129,73 +128,45 @@
             notes = {};
             drawings = {};
 
-            // Laad bestaande notities eenmalig via get()
-            try {
-                const notesSnap = await get(notesRef);
-                if (notesSnap.exists()) {
-                    const data = notesSnap.val();
-                    Object.entries(data).forEach(([key, note]) => {
-                        note.id = key;
-                        notes[key] = note;
-                        if (!document.getElementById(`note-${note.id}`)) {
-                            createStickyNoteElement(note);
+            // Notities live luisteren (onValue)
+            notesListener = onValue(notesRef, (snap) => {
+                const data = snap.val() || {};
+                const dataIds = Object.keys(data);
+
+                // Verwijder notities die niet meer bestaan
+                Object.keys(notes).forEach(id => {
+                    if (!dataIds.includes(id)) {
+                        const el = document.getElementById(`note-${id}`);
+                        if (el) el.remove();
+                        delete notes[id];
+                    }
+                });
+
+                // Update of voeg notities toe
+                dataIds.forEach(id => {
+                    const note = data[id];
+                    note.id = id;
+
+                    if (notes[id]) {
+                        // Notitie bestaat al - update, maar niet tijdens slepen
+                        if (draggingNote !== id) {
+                            updateStickyNoteElement(note);
                         }
-                    });
-                }
-            } catch (e) {
-                console.error('Fout bij laden notities:', e);
-            }
-
-            // Laad bestaande tekeningen eenmalig via get()
-            try {
-                const drawingsSnap = await get(drawingsRef);
-                if (drawingsSnap.exists()) {
-                    drawings = drawingsSnap.val();
-                    redrawAllDrawings();
-                }
-            } catch (e) {
-                console.error('Fout bij laden tekeningen:', e);
-            }
-
-            // Live notities: toevoegen, wijzigen, verwijderen
-            const onAdded = onChildAdded(notesRef, (snap) => {
-                const note = snap.val();
-                note.id = snap.key;
-                notes[note.id] = note;
-                if (!document.getElementById(`note-${note.id}`)) {
-                    createStickyNoteElement(note);
-                }
+                        // Update de notes-map altijd
+                        notes[id] = note;
+                    } else {
+                        // Nieuwe notitie
+                        notes[id] = note;
+                        createStickyNoteElement(note);
+                    }
+                });
             });
 
-            const onChanged = onChildChanged(notesRef, (snap) => {
-                const note = snap.val();
-                note.id = snap.key;
-                notes[note.id] = note;
-                updateStickyNoteElement(note);
-            });
-
-            const onRemoved = onChildRemoved(notesRef, (snap) => {
-                const noteId = snap.key;
-                delete notes[noteId];
-                const el = document.getElementById(`note-${noteId}`);
-                if (el) el.remove();
-            });
-
-            notesListenerCleanup = () => {
-                onAdded();
-                onChanged();
-                onRemoved();
-            };
-
-            // Live tekeningen: eenvoudig via onValue (geen probleem bij slepen, het zijn paden)
-            const onDrawings = onValue(drawingsRef, (snap) => {
+            // Tekeningen live luisteren
+            drawingsListener = onValue(drawingsRef, (snap) => {
                 drawings = snap.val() || {};
                 redrawAllDrawings();
             });
-
-            drawingsListenerCleanup = () => {
-                onDrawings();
-            };
         }
 
         // ====== Login ======
@@ -350,7 +321,7 @@
                 reactions: []
             };
             set(noteRef, note);
-            // Lokaal direct toevoegen voor snelle feedback
+            // Lokaal direct toevoegen voor snelle feedback (onValue doet dit ook, maar dit versnelt)
             note.id = noteRef.key;
             notes[note.id] = note;
             if (!document.getElementById(`note-${note.id}`)) {
@@ -542,20 +513,17 @@
             document.getElementById('print-area').innerHTML = '';
         });
 
-        // ====== Reset functionaliteit ======
+        // ====== Reset ======
         document.getElementById('reset-btn').addEventListener('click', () => {
             if (confirm('Weet je zeker dat je ALLE gegevens wilt wissen? Iedereen wordt ook uitgelogd.')) {
-                // Ruim listeners op
-                if (notesListenerCleanup) notesListenerCleanup();
-                if (drawingsListenerCleanup) drawingsListenerCleanup();
-                // Verwijder alle data
+                if (notesListener) notesListener();
+                if (drawingsListener) drawingsListener();
                 remove(slidesRef);
                 remove(ref(db, 'docentenoverleg/notes'));
                 remove(ref(db, 'docentenoverleg/drawings'));
                 remove(leaderNotesRef);
                 remove(usersRef);
                 set(currentSlideRef, 0);
-                // Lokale state wissen
                 currentUser = '';
                 document.getElementById('user-name-display').innerText = '';
                 loginModal.style.display = 'flex';
@@ -563,7 +531,6 @@
                 drawings = {};
                 notesContainer.innerHTML = '';
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                // Opnieuw listeners opzetten (na reset wordt slides opnieuw aangemaakt)
                 setTimeout(() => setupSlideDataListeners(), 500);
             }
         });
@@ -571,18 +538,14 @@
         // ====== Bordwisknop (alleen huidige slide) ======
         document.getElementById('clear-board-btn').addEventListener('click', () => {
             if (confirm('Wil je alle sticky notes en tekeningen op dit scherm wissen?')) {
-                // Ruim listeners op voor huidige slide
-                if (notesListenerCleanup) notesListenerCleanup();
-                if (drawingsListenerCleanup) drawingsListenerCleanup();
-                // Verwijder data van huidige slide
+                if (notesListener) notesListener();
+                if (drawingsListener) drawingsListener();
                 remove(notesRef);
                 remove(drawingsRef);
-                // Lokale staat wissen
                 notes = {};
                 drawings = {};
                 notesContainer.innerHTML = '';
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                // Luisteraars opnieuw instellen
                 setTimeout(() => setupSlideDataListeners(), 100);
             }
         });
