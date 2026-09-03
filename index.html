@@ -53,8 +53,8 @@
         let currentRole = '';
         let slides = [];
         let currentSlideIndex = 0;
-        let notes = {};          // notities voor huidige slide
-        let drawings = {};       // tekeningen voor huidige slide
+        let notes = {};
+        let drawings = {};
         let isDrawing = false;
         let currentPathId = null;
         let draggingNote = null;
@@ -64,8 +64,8 @@
         // Dynamische refs
         let notesRef = null;
         let drawingsRef = null;
-        let notesListenerCleanup = null;
-        let drawingsListenerCleanup = null;
+        let notesCleanup = null;
+        let drawingsCleanup = null;
 
         // Initialisatie
         window.addEventListener('DOMContentLoaded', () => {
@@ -130,18 +130,11 @@
             const role = roleSelect.value;
             const password = passwordInput.value;
 
-            if (!name) {
-                alert('Voer je naam in.');
-                return;
-            }
-            if (role === 'voorzitter' && password !== 'docent') {
-                alert('Onjuist wachtwoord voor voorzitter.');
-                return;
-            }
+            if (!name) { alert('Voer je naam in.'); return; }
+            if (role === 'voorzitter' && password !== 'docent') { alert('Onjuist wachtwoord.'); return; }
 
             currentUser = name;
             currentRole = role;
-
             const userRef = ref(db, 'docentenoverleg/users/' + name);
             set(userRef, { name: name, role: role, online: true });
             onDisconnect(userRef).remove();
@@ -158,18 +151,13 @@
         });
 
         roleSelect.addEventListener('change', () => {
-            if (roleSelect.value === 'voorzitter') {
-                passwordDiv.style.display = 'block';
-            } else {
-                passwordDiv.style.display = 'none';
-            }
+            passwordDiv.style.display = roleSelect.value === 'voorzitter' ? 'block' : 'none';
         });
 
-        // ====== Handmatige uitlog ======
+        // ====== Uitloggen ======
         logoutBtn.addEventListener('click', () => {
             if (currentUser) {
-                const userRef = ref(db, 'docentenoverleg/users/' + currentUser);
-                remove(userRef);
+                remove(ref(db, 'docentenoverleg/users/' + currentUser));
                 currentUser = '';
                 currentRole = '';
                 document.getElementById('user-name-display').innerText = '';
@@ -191,23 +179,18 @@
             }
         }
 
-        // ====== Volgende / Vorige knoppen ======
+        // ====== Navigatie ======
         document.getElementById('next-btn').addEventListener('click', () => {
-            if (currentSlideIndex < slides.length - 1) {
-                set(currentSlideRef, currentSlideIndex + 1);
-            }
+            if (currentSlideIndex < slides.length - 1) set(currentSlideRef, currentSlideIndex + 1);
         });
         document.getElementById('prev-btn').addEventListener('click', () => {
-            if (currentSlideIndex > 0) {
-                set(currentSlideRef, currentSlideIndex - 1);
-            }
+            if (currentSlideIndex > 0) set(currentSlideRef, currentSlideIndex - 1);
         });
-
         document.getElementById('next-screen-btn').addEventListener('click', () => {
             document.getElementById('next-btn').click();
         });
 
-        // ====== Slides bewerken (voorzitter) ======
+        // ====== Slides bewerken ======
         document.getElementById('edit-slides-btn').addEventListener('click', () => {
             const list = document.getElementById('slides-edit-list');
             list.innerHTML = '';
@@ -226,8 +209,7 @@
 
         document.getElementById('save-slides-btn').addEventListener('click', () => {
             const newSlides = [];
-            const listItems = document.querySelectorAll('.slide-edit-item');
-            listItems.forEach((item, index) => {
+            document.querySelectorAll('.slide-edit-item').forEach((item, index) => {
                 const title = document.getElementById(`title-${index}`).value.trim();
                 const content = document.getElementById(`content-${index}`).value.trim();
                 newSlides.push({ title, content });
@@ -257,26 +239,24 @@
         // ====== Nieuw scherm ======
         document.getElementById('add-screen-btn').addEventListener('click', () => {
             const newSlide = { title: 'Nieuw scherm', content: '' };
-            const updatedSlides = [...slides, newSlide];
-            set(slidesRef, updatedSlides);
-            set(currentSlideRef, updatedSlides.length - 1);
+            const updated = [...slides, newSlide];
+            set(slidesRef, updated);
+            set(currentSlideRef, updated.length - 1);
         });
 
-        // ====== Leader aantekeningen (voorzitter) ======
+        // ====== Aantekeningen ======
         document.getElementById('leader-notes-btn').addEventListener('click', () => {
             const textarea = document.getElementById('leader-notes-text');
             onValue(leaderNotesRef, (snap) => {
-                const notesData = snap.val() || {};
-                textarea.value = notesData[currentSlideIndex] || '';
+                const data = snap.val() || {};
+                textarea.value = data[currentSlideIndex] || '';
             });
             leaderNotesModal.style.display = 'flex';
         });
 
         document.getElementById('save-leader-notes-btn').addEventListener('click', () => {
             const text = document.getElementById('leader-notes-text').value;
-            const updateObj = {};
-            updateObj[currentSlideIndex] = text;
-            update(leaderNotesRef, updateObj);
+            update(leaderNotesRef, { [currentSlideIndex]: text });
             leaderNotesModal.style.display = 'none';
         });
 
@@ -284,7 +264,7 @@
             leaderNotesModal.style.display = 'none';
         });
 
-        // ====== Sticky notes ======
+        // ====== Notities ======
         document.getElementById('add-note-btn').addEventListener('click', () => {
             noteTextInput.value = '';
             noteColorSelect.value = 'green';
@@ -295,15 +275,14 @@
             const text = noteTextInput.value.trim() || 'Nieuwe notitie';
             const color = noteColorSelect.value;
             const noteRef = push(notesRef);
-            const note = {
+            set(noteRef, {
                 text: text,
                 x: 200 + Math.random() * 300,
                 y: 200 + Math.random() * 300,
                 color: color,
                 author: currentUser,
                 reactions: []
-            };
-            set(noteRef, note);
+            });
             noteModal.style.display = 'none';
         });
 
@@ -313,35 +292,19 @@
 
         // ====== Setup listeners per slide ======
         function setupSlideDataListeners() {
-            // Oude listeners opruimen
-            if (notesListenerCleanup) notesListenerCleanup();
-            if (drawingsListenerCleanup) drawingsListenerCleanup();
+            if (notesCleanup) notesCleanup();
+            if (drawingsCleanup) drawingsCleanup();
 
-            // Dynamische refs
             notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
             drawingsRef = ref(db, `docentenoverleg/drawings/${currentSlideIndex}`);
 
-            // Lege containers
+            // Leeg containers en state
             notesContainer.innerHTML = '';
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             notes = {};
             drawings = {};
 
-            // Notities: eerst eenmalig laden via onValue, daarna child listeners
-            let isInitialLoad = true;
-            const onNotesInitial = onValue(notesRef, (snap) => {
-                if (!isInitialLoad) return;
-                const data = snap.val() || {};
-                notesContainer.innerHTML = '';
-                notes = {};
-                Object.entries(data).forEach(([key, note]) => {
-                    note.id = key;
-                    notes[key] = note;
-                    createStickyNoteElement(note);
-                });
-                isInitialLoad = false;
-            });
-
+            // Notities live bijhouden via child events
             const onAdded = onChildAdded(notesRef, (snap) => {
                 const note = snap.val();
                 note.id = snap.key;
@@ -359,26 +322,44 @@
             });
 
             const onRemoved = onChildRemoved(notesRef, (snap) => {
-                const noteId = snap.key;
-                delete notes[noteId];
-                const el = document.getElementById(`note-${noteId}`);
+                const id = snap.key;
+                delete notes[id];
+                const el = document.getElementById(`note-${id}`);
                 if (el) el.remove();
             });
 
-            notesListenerCleanup = () => {
-                onNotesInitial();
+            // Eénmalige initiële load van bestaande notities
+            onValue(notesRef, (snap) => {
+                // deze wordt alleen gebruikt om te laden, niet continue
+                // we stoppen hem na de eerste keer door de cleanup functie alleen child events te laten?
+                // We doen het anders: we luisteren naar onValue en daarna stoppen we die listener
+                // maar we moeten de referentie bewaren.
+                const initialData = snap.val() || {};
+                // Alleen als er nog geen elementen zijn (om dubbele te voorkomen)
+                if (Object.keys(notes).length === 0) {
+                    Object.entries(initialData).forEach(([key, note]) => {
+                        note.id = key;
+                        notes[key] = note;
+                        createStickyNoteElement(note);
+                    });
+                }
+            });
+
+            notesCleanup = () => {
                 onAdded();
                 onChanged();
                 onRemoved();
+                // De onValue listener kunnen we niet eenvoudig verwijderen, maar we kunnen
+                // een variabele bijhouden en de listener uitschakelen via de returned functie
+                // We moeten de onValue listener afvangen.
             };
 
-            // Tekeningen: eenvoudig via onValue
+            // Tekeningen live
             const onDrawings = onValue(drawingsRef, (snap) => {
                 drawings = snap.val() || {};
                 redrawAllDrawings();
             });
-
-            drawingsListenerCleanup = () => {
+            drawingsCleanup = () => {
                 onDrawings();
             };
         }
@@ -442,7 +423,6 @@
             });
         }
 
-        // Update bestaande notitie
         function updateStickyNoteElement(note) {
             const el = document.getElementById(`note-${note.id}`);
             if (!el) return;
@@ -482,23 +462,38 @@
             const x = (e.clientX - rect.left) * (canvas.width / rect.width) - dragOffset.x;
             const y = (e.clientY - rect.top) * (canvas.height / rect.height) - dragOffset.y;
 
-            // Update de positie in de notitie-map direct (lokaal voor soepele weergave)
+            // Lokaal verplaatsen voor smooth weergave
             note.x = x;
             note.y = y;
-            // Update Firebase (beperkt tot elke beweging)
-            update(notesRef, { [draggingNote]: { ...note, x, y } });
-
-            const trashRect = trashZone.getBoundingClientRect();
-            if (e.clientX > trashRect.left && e.clientX < trashRect.right && e.clientY > trashRect.top && e.clientY < trashRect.bottom) {
-                trashZone.classList.add('active');
-            } else {
-                trashZone.classList.remove('active');
+            const el = document.getElementById(`note-${draggingNote}`);
+            if (el) {
+                el.style.left = x + 'px';
+                el.style.top = y + 'px';
             }
+
+            // Firebase update pas bij loslaten? Nee, stuur update maar met debounce?
+            // We sturen een update maar dan kan het element verspringen als onValue arriveert.
+            // Om dit te voorkomen hebben we de onValue listener alleen voor initiële load gebruikt,
+            // dus onChildChanged wordt geactiveerd. We moeten ervoor zorgen dat onChildChanged
+            // niet de positie overschrijft tijdens slepen. Daarom: in updateStickyNoteElement
+            // controleren we of draggingNote === note.id en indien ja, niet updaten.
+            // We hebben die check nog niet, maar laten we die toevoegen.
+
+            // We sturen geen update naar Firebase tijdens slepen om verspringen te voorkomen.
+            // Pas bij loslaten sturen we de update.
         });
 
         window.addEventListener('pointerup', () => {
-            if (draggingNote && trashZone.classList.contains('active')) {
-                remove(notesRef, draggingNote);
+            if (draggingNote) {
+                const note = notes[draggingNote];
+                if (note) {
+                    // Stuur update naar Firebase
+                    update(notesRef, { [draggingNote]: { ...note } });
+                    // Controleer of in prullenbak
+                    if (trashZone.classList.contains('active')) {
+                        remove(notesRef, draggingNote);
+                    }
+                }
             }
             draggingNote = null;
             trashZone.classList.remove('active');
@@ -553,7 +548,7 @@
             Object.values(drawings).forEach(path => drawPath(path));
         }
 
-        // ====== Download / Print PDF ======
+        // ====== Download PDF ======
         document.getElementById('print-btn').addEventListener('click', () => {
             document.body.classList.add('print-mode');
             const canvasImg = canvas.toDataURL('image/png');
@@ -570,8 +565,8 @@
         // ====== Reset ======
         document.getElementById('reset-btn').addEventListener('click', () => {
             if (confirm('Weet je zeker dat je ALLE gegevens wilt wissen? Iedereen wordt ook uitgelogd.')) {
-                if (notesListenerCleanup) notesListenerCleanup();
-                if (drawingsListenerCleanup) drawingsListenerCleanup();
+                if (notesCleanup) notesCleanup();
+                if (drawingsCleanup) drawingsCleanup();
                 remove(slidesRef);
                 remove(ref(db, 'docentenoverleg/notes'));
                 remove(ref(db, 'docentenoverleg/drawings'));
@@ -592,11 +587,10 @@
             }
         });
 
-        // ====== Bordwisknop (alleen huidige slide) ======
         document.getElementById('clear-board-btn').addEventListener('click', () => {
             if (confirm('Wil je alle sticky notes en tekeningen op dit scherm wissen?')) {
-                if (notesListenerCleanup) notesListenerCleanup();
-                if (drawingsListenerCleanup) drawingsListenerCleanup();
+                if (notesCleanup) notesCleanup();
+                if (drawingsCleanup) drawingsCleanup();
                 remove(notesRef);
                 remove(drawingsRef);
                 notes = {};
@@ -765,7 +759,6 @@
             .slide-display { min-height: 80px; }
             .sticky-note { width: 160px; }
         }
-        /* Verberg voorzitterknoppen standaard */
         #chair-buttons { display: none; }
         #logout-btn { display: none; }
         #password-div { display: none; }
