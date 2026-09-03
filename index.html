@@ -6,7 +6,7 @@
     <title>Docentenoverleg Digibord</title>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update, remove, set, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, onValue, push, update, remove, set, onChildAdded, onChildChanged, onChildRemoved, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         // Firebase configuratie
         const firebaseConfig = {
@@ -71,7 +71,7 @@
                 }
             });
 
-            // Laad slides
+            // Slides laden
             onValue(slidesRef, (snap) => {
                 slides = snap.val() || [];
                 if (slides.length === 0) {
@@ -85,30 +85,46 @@
                 }
             });
 
-            // Laad huidige slide index
+            // Huidige slide
             onValue(currentSlideRef, (snap) => {
                 currentSlideIndex = snap.val() || 0;
                 updateSlideDisplay();
             });
 
-            // Laad sticky notes
-            onValue(notesRef, (snap) => {
-                notes = snap.val() || {};
-                notesContainer.innerHTML = '';
-                Object.values(notes).forEach(note => createStickyNoteElement(note));
+            // Notities laden - alleen via child listeners (geen onValue meer)
+            onChildAdded(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                if (!document.getElementById(`note-${note.id}`)) {
+                    createStickyNoteElement(note);
+                }
             });
 
-            // Laad tekeningen
+            onChildChanged(notesRef, (snap) => {
+                const note = snap.val();
+                note.id = snap.key;
+                notes[note.id] = note;
+                updateStickyNoteElement(note);
+            });
+
+            onChildRemoved(notesRef, (snap) => {
+                const noteId = snap.key;
+                delete notes[noteId];
+                const el = document.getElementById(`note-${noteId}`);
+                if (el) el.remove();
+            });
+
+            // Tekeningen laden
             onValue(drawingsRef, (snap) => {
                 drawings = snap.val() || {};
                 redrawAllDrawings();
             });
 
-            // Luister naar gebruikerslijst om uitloggen te detecteren
+            // Gebruikerslijst (uitloggen bij reset)
             onValue(usersRef, (snap) => {
                 const users = snap.val() || {};
                 if (currentUser && !users[currentUser]) {
-                    // Gebruiker is verwijderd (reset of andere reden) -> uitloggen
                     currentUser = '';
                     document.getElementById('user-name-display').innerText = '';
                     loginModal.style.display = 'flex';
@@ -121,10 +137,8 @@
             const name = userNameInput.value.trim();
             if (name) {
                 currentUser = name;
-                // Voeg gebruiker toe aan Firebase
                 const userRef = ref(db, 'docentenoverleg/users/' + name);
                 set(userRef, { name: name, online: true });
-                // Verwijder gebruiker automatisch bij disconnect
                 onDisconnect(userRef).remove();
 
                 loginModal.style.display = 'none';
@@ -251,14 +265,12 @@
         });
 
         // ====== Sticky notes ======
-        // Open modal voor nieuwe notitie
         document.getElementById('add-note-btn').addEventListener('click', () => {
             noteTextInput.value = '';
             noteColorSelect.value = 'green';
             noteModal.style.display = 'flex';
         });
 
-        // Bevestig nieuwe notitie
         document.getElementById('confirm-note-btn').addEventListener('click', () => {
             const text = noteTextInput.value.trim() || 'Nieuwe notitie';
             const color = noteColorSelect.value;
@@ -271,16 +283,22 @@
                 author: currentUser,
                 reactions: []
             };
+            // Zet de notitie in Firebase
             set(noteRef, note);
+            // Voeg de notitie ook direct lokaal toe voor snelle weergave
+            note.id = noteRef.key;
+            notes[note.id] = note;
+            if (!document.getElementById(`note-${note.id}`)) {
+                createStickyNoteElement(note);
+            }
             noteModal.style.display = 'none';
         });
 
-        // Sluit modal
         document.getElementById('cancel-note-btn').addEventListener('click', () => {
             noteModal.style.display = 'none';
         });
 
-        // Sticky note elementen
+        // Sticky note elementen (aanmaken)
         function createStickyNoteElement(note) {
             const el = document.createElement('div');
             el.className = 'sticky-note';
@@ -337,6 +355,21 @@
                     reactionInput.value = '';
                 }
             });
+        }
+
+        // Update bestaande notitie
+        function updateStickyNoteElement(note) {
+            const el = document.getElementById(`note-${note.id}`);
+            if (!el) return;
+            el.style.left = note.x + 'px';
+            el.style.top = note.y + 'px';
+            el.style.backgroundColor = note.color;
+            const textEl = el.querySelector('.note-text');
+            if (textEl.innerText !== note.text && !textEl.isContentEditable) {
+                textEl.innerText = note.text;
+            }
+            const reactionsDiv = el.querySelector('.note-reactions');
+            reactionsDiv.innerHTML = note.reactions.map(r => `<div class="reaction">${r.author}: ${r.text}</div>`).join('');
         }
 
         // ====== Slepen van sticky notes ======
@@ -446,7 +479,6 @@
         });
 
         // ====== Reset functionaliteit ======
-        // Volledige reset (alles wissen + uitloggen)
         document.getElementById('reset-btn').addEventListener('click', () => {
             if (confirm('Weet je zeker dat je ALLE gegevens wilt wissen? Iedereen wordt ook uitgelogd.')) {
                 remove(slidesRef);
@@ -455,15 +487,13 @@
                 remove(leaderNotesRef);
                 remove(usersRef);
                 set(currentSlideRef, 0);
-                // Gebruiker wordt automatisch uitgelogd via de listener op usersRef
-                // Lokale state ook wissen
+                // Lokale state wissen
                 currentUser = '';
                 document.getElementById('user-name-display').innerText = '';
                 loginModal.style.display = 'flex';
             }
         });
 
-        // Alleen deelnemersinput wissen (sticky notes + tekeningen)
         document.getElementById('clear-board-btn').addEventListener('click', () => {
             if (confirm('Wil je alle sticky notes en tekeningen wissen?')) {
                 remove(notesRef);
@@ -599,13 +629,6 @@
             display: flex; align-items: center; gap: 5px; font-size: 0.9rem;
         }
         .digibord-toolbar button:hover { background: #e5e7eb; border-radius: 20px; }
-        .color-options { display: flex; gap: 5px; align-items: center; }
-        .color-options input[type="radio"] { display: none; }
-        .color-options label { width: 25px; height: 25px; border-radius: 50%; cursor: pointer; display: inline-block; border: 2px solid transparent; transition: 0.2s; }
-        .color-options input:checked + label { border-color: #333; transform: scale(1.1); }
-        .color-options label.green { background: #22c55e; }
-        .color-options label.red { background: #ef4444; }
-        .color-options label.blue { background: #3b82f6; }
         #status { font-size: 0.9rem; padding: 4px 10px; border-radius: 20px; background: #eee; }
         #status.online { background: #ebffed; color: #2e7d32; }
         .modal {
