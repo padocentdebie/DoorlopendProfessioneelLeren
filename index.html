@@ -93,7 +93,6 @@
                 const newIndex = snap.val() || 0;
                 if (newIndex !== currentSlideIndex) {
                     currentSlideIndex = newIndex;
-                    // Set up nieuwe listeners voor deze slide
                     setupSlideDataListeners();
                     updateSlideDisplay();
                 } else {
@@ -130,19 +129,23 @@
             notes = {};
             drawings = {};
 
-            // Notities: eerst alle bestaande laden (eenmalig), daarna luisteren
+            // Notities laden (eenmalig, daarna alleen via child listeners)
+            let isInitialLoad = true;
             const onNotesLoad = onValue(notesRef, (snap) => {
-                notes = snap.val() || {};
-                // Elementen opnieuw maken (eerst legen)
+                if (!isInitialLoad) return;
+                const data = snap.val() || {};
                 notesContainer.innerHTML = '';
-                Object.values(notes).forEach(note => {
+                notes = {};
+                Object.entries(data).forEach(([key, note]) => {
+                    note.id = key;
+                    notes[key] = note;
                     if (!document.getElementById(`note-${note.id}`)) {
                         createStickyNoteElement(note);
                     }
                 });
+                isInitialLoad = false;
             });
 
-            // Daarna child listeners voor realtime
             const onAdded = onChildAdded(notesRef, (snap) => {
                 const note = snap.val();
                 note.id = snap.key;
