@@ -32,6 +32,9 @@
         const slideDisplay = document.getElementById('slide-content');
         const currentSlideIndicator = document.getElementById('current-slide');
         const userNameInput = document.getElementById('user-name-input');
+        const roleSelect = document.getElementById('role-select');
+        const passwordInput = document.getElementById('password-input');
+        const passwordDiv = document.getElementById('password-div');
         const loginModal = document.getElementById('login-modal');
         const editSlidesModal = document.getElementById('edit-slides-modal');
         const leaderNotesModal = document.getElementById('leader-notes-modal');
@@ -41,13 +44,17 @@
         const notesContainer = document.getElementById('notes-container');
         const canvas = document.getElementById('drawing-canvas');
         const ctx = canvas.getContext('2d');
+        const userInfoDiv = document.getElementById('user-info');
+        const chairButtons = document.getElementById('chair-buttons');
+        const logoutBtn = document.getElementById('logout-btn');
 
         // Globale variabelen
         let currentUser = '';
+        let currentRole = '';
         let slides = [];
         let currentSlideIndex = 0;
-        let notes = {};          // notities voor huidige slide
-        let drawings = {};       // tekeningen voor huidige slide
+        let notes = {};
+        let drawings = {};
         let isDrawing = false;
         let currentPathId = null;
         let draggingNote = null;
@@ -101,97 +108,80 @@
                 }
             });
 
-            // Gebruikerslijst
+            // Gebruikerslijst (voor weergave en uitloggen bij reset)
             onValue(usersRef, (snap) => {
                 const users = snap.val() || {};
+                // Toon lijst van ingelogde collega's
+                const names = Object.keys(users);
+                userInfoDiv.innerHTML = names.length > 0 ? 'Ingelogd: ' + names.join(', ') : 'Niemand ingelogd';
+                // Controleer of huidige gebruiker nog bestaat, anders uitloggen
                 if (currentUser && !users[currentUser]) {
                     currentUser = '';
+                    currentRole = '';
                     document.getElementById('user-name-display').innerText = '';
+                    chairButtons.style.display = 'none';
+                    logoutBtn.style.display = 'none';
                     loginModal.style.display = 'flex';
                 }
             });
         });
 
-        // ====== Slide-data listeners ======
-        function setupSlideDataListeners() {
-            // Oude listeners opruimen
-            if (notesListener) notesListener();
-            if (drawingsListener) drawingsListener();
-
-            // Dynamische refs
-            notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
-            drawingsRef = ref(db, `docentenoverleg/drawings/${currentSlideIndex}`);
-
-            // Lege containers
-            notesContainer.innerHTML = '';
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            notes = {};
-            drawings = {};
-
-            // Notities live luisteren (onValue)
-            notesListener = onValue(notesRef, (snap) => {
-                const data = snap.val() || {};
-                const dataIds = Object.keys(data);
-
-                // Verwijder notities die niet meer bestaan
-                Object.keys(notes).forEach(id => {
-                    if (!dataIds.includes(id)) {
-                        const el = document.getElementById(`note-${id}`);
-                        if (el) el.remove();
-                        delete notes[id];
-                    }
-                });
-
-                // Update of voeg notities toe
-                dataIds.forEach(id => {
-                    const note = data[id];
-                    note.id = id;
-
-                    if (notes[id]) {
-                        // Notitie bestaat al - update, maar niet tijdens slepen
-                        if (draggingNote !== id) {
-                            updateStickyNoteElement(note);
-                        }
-                        // Update de notes-map altijd
-                        notes[id] = note;
-                    } else {
-                        // Nieuwe notitie
-                        notes[id] = note;
-                        createStickyNoteElement(note);
-                    }
-                });
-            });
-
-            // Tekeningen live luisteren
-            drawingsListener = onValue(drawingsRef, (snap) => {
-                drawings = snap.val() || {};
-                redrawAllDrawings();
-            });
-        }
-
         // ====== Login ======
         document.getElementById('login-btn').addEventListener('click', () => {
             const name = userNameInput.value.trim();
-            if (name) {
-                currentUser = name;
-                const userRef = ref(db, 'docentenoverleg/users/' + name);
-                set(userRef, { name: name, online: true });
-                onDisconnect(userRef).remove();
+            const role = roleSelect.value;
+            const password = passwordInput.value;
 
-                loginModal.style.display = 'none';
-                document.getElementById('user-name-display').innerText = `Ingelogd als: ${currentUser}`;
-            } else {
+            if (!name) {
                 alert('Voer je naam in.');
+                return;
+            }
+            if (role === 'voorzitter') {
+                if (password !== 'docent') {
+                    alert('Onjuist wachtwoord voor voorzitter.');
+                    return;
+                }
+            }
+
+            currentUser = name;
+            currentRole = role;
+
+            // Opslaan in Firebase
+            const userRef = ref(db, 'docentenoverleg/users/' + name);
+            set(userRef, { name: name, role: role, online: true });
+            onDisconnect(userRef).remove();
+
+            // UI aanpassen
+            loginModal.style.display = 'none';
+            document.getElementById('user-name-display').innerText = `Ingelogd als: ${name}`;
+            if (role === 'voorzitter') {
+                chairButtons.style.display = 'flex';
+                logoutBtn.style.display = 'inline-block';
+            } else {
+                chairButtons.style.display = 'none';
+                logoutBtn.style.display = 'none';
+            }
+        });
+
+        // Wachtwoordveld tonen/verbergen bij rolkeuze
+        roleSelect.addEventListener('change', () => {
+            if (roleSelect.value === 'voorzitter') {
+                passwordDiv.style.display = 'block';
+            } else {
+                passwordDiv.style.display = 'none';
             }
         });
 
         // ====== Handmatige uitlog ======
-        document.getElementById('logout-btn').addEventListener('click', () => {
+        logoutBtn.addEventListener('click', () => {
             if (currentUser) {
                 const userRef = ref(db, 'docentenoverleg/users/' + currentUser);
                 remove(userRef);
                 currentUser = '';
+                currentRole = '';
                 document.getElementById('user-name-display').innerText = '';
+                chairButtons.style.display = 'none';
+                logoutBtn.style.display = 'none';
                 loginModal.style.display = 'flex';
             }
         });
@@ -224,7 +214,7 @@
             document.getElementById('next-btn').click();
         });
 
-        // ====== Slides bewerken ======
+        // ====== Slides bewerken (alleen voorzitter) ======
         document.getElementById('edit-slides-btn').addEventListener('click', () => {
             const list = document.getElementById('slides-edit-list');
             list.innerHTML = '';
@@ -279,7 +269,7 @@
             set(currentSlideRef, updatedSlides.length - 1);
         });
 
-        // ====== Leader aantekeningen ======
+        // ====== Leader aantekeningen (alleen voorzitter) ======
         document.getElementById('leader-notes-btn').addEventListener('click', () => {
             const textarea = document.getElementById('leader-notes-text');
             onValue(leaderNotesRef, (snap) => {
@@ -321,12 +311,6 @@
                 reactions: []
             };
             set(noteRef, note);
-            // Lokaal direct toevoegen voor snelle feedback (onValue doet dit ook, maar dit versnelt)
-            note.id = noteRef.key;
-            notes[note.id] = note;
-            if (!document.getElementById(`note-${note.id}`)) {
-                createStickyNoteElement(note);
-            }
             noteModal.style.display = 'none';
         });
 
@@ -334,7 +318,63 @@
             noteModal.style.display = 'none';
         });
 
-        // Sticky note elementen
+        // ====== Setup listeners per slide ======
+        function setupSlideDataListeners() {
+            // Oude listeners opruimen
+            if (notesListener) notesListener();
+            if (drawingsListener) drawingsListener();
+
+            // Dynamische refs
+            notesRef = ref(db, `docentenoverleg/notes/${currentSlideIndex}`);
+            drawingsRef = ref(db, `docentenoverleg/drawings/${currentSlideIndex}`);
+
+            // Lege containers
+            notesContainer.innerHTML = '';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            notes = {};
+            drawings = {};
+
+            // Notities listener (onValue)
+            notesListener = onValue(notesRef, (snap) => {
+                const data = snap.val() || {};
+                const dataIds = Object.keys(data);
+
+                // Verwijder notities die er niet meer zijn
+                Object.keys(notes).forEach(id => {
+                    if (!dataIds.includes(id)) {
+                        const el = document.getElementById(`note-${id}`);
+                        if (el) el.remove();
+                        delete notes[id];
+                    }
+                });
+
+                // Voeg nieuwe notities toe of update bestaande
+                dataIds.forEach(id => {
+                    const note = data[id];
+                    note.id = id;
+
+                    if (notes[id]) {
+                        // Bestaande notitie: update positie/kleur/tekst, maar niet tijdens slepen
+                        if (draggingNote !== id) {
+                            updateStickyNoteElement(note);
+                        }
+                        notes[id] = note;
+                    } else {
+                        // Nieuwe notitie
+                        notes[id] = note;
+                        createStickyNoteElement(note);
+                    }
+                });
+            });
+
+            // Tekeningen listener
+            drawingsListener = onValue(drawingsRef, (snap) => {
+                drawings = snap.val() || {};
+                redrawAllDrawings();
+            });
+        }
+
+        // Sticky note element aanmaken
         function createStickyNoteElement(note) {
             const el = document.createElement('div');
             el.className = 'sticky-note';
@@ -393,6 +433,7 @@
             });
         }
 
+        // Update bestaande notitie
         function updateStickyNoteElement(note) {
             const el = document.getElementById(`note-${note.id}`);
             if (!el) return;
@@ -525,7 +566,10 @@
                 remove(usersRef);
                 set(currentSlideRef, 0);
                 currentUser = '';
+                currentRole = '';
                 document.getElementById('user-name-display').innerText = '';
+                chairButtons.style.display = 'none';
+                logoutBtn.style.display = 'none';
                 loginModal.style.display = 'flex';
                 notes = {};
                 drawings = {};
@@ -680,6 +724,7 @@
         .digibord-toolbar button:hover { background: #e5e7eb; border-radius: 20px; }
         #status { font-size: 0.9rem; padding: 4px 10px; border-radius: 20px; background: #eee; }
         #status.online { background: #ebffed; color: #2e7d32; }
+        #user-info { font-size: 0.9rem; padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,0.2); }
         .modal {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 300;
@@ -707,6 +752,10 @@
             .slide-display { min-height: 80px; }
             .sticky-note { width: 160px; }
         }
+        /* Verberg voorzitterknoppen standaard */
+        #chair-buttons { display: none; }
+        #logout-btn { display: none; }
+        #password-div { display: none; }
     </style>
 </head>
 <body>
@@ -715,12 +764,15 @@
     <h1>📋 Docentenoverleg Digibord</h1>
     <div class="header-controls">
         <span id="status">Status: Laden...</span>
-        <button id="edit-slides-btn" class="btn">✏️ Slides bewerken</button>
-        <button id="leader-notes-btn" class="btn secondary">📝 Aantekeningen</button>
-        <button id="print-btn" class="btn green">🖨️ Download PDF</button>
-        <button id="reset-btn" class="btn red">🗑️ Reset + uitloggen</button>
-        <button id="logout-btn" class="btn secondary">🚪 Uitloggen</button>
+        <div id="chair-buttons" style="display: none;">
+            <button id="edit-slides-btn" class="btn">✏️ Slides bewerken</button>
+            <button id="leader-notes-btn" class="btn secondary">📝 Aantekeningen</button>
+            <button id="print-btn" class="btn green">🖨️ Download PDF</button>
+            <button id="reset-btn" class="btn red">🗑️ Reset</button>
+        </div>
+        <button id="logout-btn" class="btn secondary" style="display: none;">🚪 Uitloggen</button>
         <span id="user-name-display" style="font-size: 0.9rem;"></span>
+        <span id="user-info" style="font-size: 0.9rem; margin-left: 10px;"></span>
     </div>
 </header>
 
@@ -758,8 +810,18 @@
 <div id="login-modal" class="modal" style="display: flex;">
     <div class="modal-content" style="max-width: 400px;">
         <h2>Welkom!</h2>
-        <p>Voer je naam in om deel te nemen.</p>
+        <p>Voer je naam en rol in.</p>
+        <label for="user-name-input">Naam:</label>
         <input type="text" id="user-name-input" placeholder="Je naam" style="width: 100%; padding: 10px; margin-bottom: 10px;">
+        <label for="role-select">Rol:</label>
+        <select id="role-select" style="width: 100%; padding: 10px; margin-bottom: 10px;">
+            <option value="deelnemer">Deelnemer</option>
+            <option value="voorzitter">Voorzitter</option>
+        </select>
+        <div id="password-div" style="width: 100%; margin-bottom: 10px;">
+            <label for="password-input">Wachtwoord:</label>
+            <input type="password" id="password-input" placeholder="Wachtwoord" style="width: 100%; padding: 10px;">
+        </div>
         <button id="login-btn" class="btn" style="width: 100%;">Start</button>
     </div>
 </div>
