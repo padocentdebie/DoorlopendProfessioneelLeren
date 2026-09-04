@@ -441,14 +441,17 @@
 
 
         const currentIndex = data.currentIndex || 0;
-        const currentAgenda = data.agenda ? data.agenda[currentIndex] : null;
+        
+        // Converteer agenda automatisch naar Array om Firebase object-conversies op te vangen
+        const agendaArray = data.agenda ? (Array.isArray(data.agenda) ? data.agenda : Object.values(data.agenda)) : [];
+        const currentAgenda = agendaArray[currentIndex] || null;
 
 
         // Vul de keuzelijst voor de presentator in
-        if (data.agenda && currentRole === 'presenter') {
+        if (agendaArray.length > 0 && currentRole === 'presenter') {
             const select = document.getElementById('select-agenda');
             select.innerHTML = '';
-            data.agenda.forEach((item, idx) => {
+            agendaArray.forEach((item, idx) => {
                 const opt = document.createElement('option');
                 opt.value = idx;
                 opt.textContent = `${idx + 1}. ${item.title}`;
@@ -507,8 +510,9 @@
     /* Live Bewerken Agendapunten door Presentator */
     document.getElementById('btn-edit-live-agenda').addEventListener('click', () => {
         if (!currentMeetingState || !currentMeetingState.agenda) return;
+        const agendaArray = Array.isArray(currentMeetingState.agenda) ? currentMeetingState.agenda : Object.values(currentMeetingState.agenda);
         const idx = currentMeetingState.currentIndex;
-        const currentAgenda = currentMeetingState.agenda[idx];
+        const currentAgenda = agendaArray[idx];
         if (!currentAgenda) return;
 
 
@@ -567,8 +571,9 @@
 
     document.getElementById('btn-next-agenda').addEventListener('click', () => {
         if (currentMeetingState && currentMeetingState.agenda) {
+            const agendaArray = Array.isArray(currentMeetingState.agenda) ? currentMeetingState.agenda : Object.values(currentMeetingState.agenda);
             const nextIndex = (currentMeetingState.currentIndex || 0) + 1;
-            if (nextIndex < currentMeetingState.agenda.length) {
+            if (nextIndex < agendaArray.length) {
                 update(ref(db, 'meeting'), { currentIndex: nextIndex });
             } else {
                 alert("Dit was het laatste agendapunt!");
@@ -767,7 +772,7 @@
 
     /* DOWNLOAD COMPLETE VERGADERINGS-PDF */
     document.getElementById('btn-download-pdf').addEventListener('click', () => {
-        if (!currentMeetingState || !currentMeetingState.agenda || currentMeetingState.agenda.length === 0) {
+        if (!currentMeetingState || !currentMeetingState.agenda) {
             return alert("Geen vergaderdata gevonden om te exporteren.");
         }
 
@@ -780,7 +785,11 @@
         fullPdfContainer.style.fontFamily = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
 
 
-        const agendaList = currentMeetingState.agenda;
+        const agendaList = Array.isArray(currentMeetingState.agenda) ? currentMeetingState.agenda : Object.values(currentMeetingState.agenda);
+
+        if (agendaList.length === 0) {
+            return alert("Geen vergaderdata gevonden om te exporteren.");
+        }
 
 
         agendaList.forEach((agendaItem, idx) => {
