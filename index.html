@@ -63,6 +63,7 @@
         }
         .delete-sticky-btn:hover { background: rgba(231, 76, 60, 0.2); color: #c0392b; }
 
+
         .sticky-creator { background: white; padding: 10px; border: 1px solid #ccc; margin-bottom: 10px; border-radius: 8px; }
         
         .board-term {
@@ -73,6 +74,7 @@
         .board-term.draggable { cursor: grab; }
         .board-term.draggable:active { cursor: grabbing; }
 
+
         /* Kleurkiezer */
         .color-options { display: flex; gap: 15px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
         .color-options label { display: flex; align-items: center; gap: 5px; cursor: pointer; font-weight: bold; }
@@ -81,16 +83,20 @@
         .color-green { background-color: #CAFFBF; }
         .color-red { background-color: #FFADAD; }
 
+
         .presenter-tools { background: #e8f4f8; padding: 10px; border: 1px solid #b6d4fe; border-radius: 8px; margin-bottom: 15px; }
+
 
         /* Layout Grid */
         .split-view { display: flex; gap: 20px; }
         .split-view > div { flex: 1; }
 
+
         .setup-agenda-item { display: flex; align-items: center; justify-content: space-between; padding: 6px; background: #f9f9f9; border: 1px solid #ddd; margin-bottom: 5px; border-radius: 4px; }
     </style>
 </head>
 <body>
+
 
 <div class="container">
     <div id="login-view">
@@ -99,6 +105,7 @@
         <button id="btn-login-presenter">Inloggen als Presentator</button>
         <button id="btn-login-participant">Inloggen als Deelnemer</button>
     </div>
+
 
     <div id="presenter-setup-view" class="hidden">
         <h2>Agenda Samenstellen (Presentator)</h2>
@@ -113,12 +120,14 @@
             </div>
             <div id="agenda-content" class="rich-textarea" contenteditable="true"></div>
 
+
             <label><input type="checkbox" id="agenda-has-board"> Voeg interactief bord toe voor dit punt</label><br><br>
             
             <div id="board-headers-setup" class="hidden">
                 <input type="text" id="board-headers" placeholder="Vaste Kopjes (bijv: Te doen, Bezig, Gedaan)" style="width: 100%; box-sizing: border-box;">
                 <small>Scheid de kopjes met een komma.</small><br><br>
             </div>
+
 
             <button id="btn-add-agenda">Agendapunt Toevoegen</button>
             <button id="btn-cancel-edit-setup" class="danger hidden">Annuleren</button>
@@ -127,13 +136,16 @@
         <h3>Toegevoegde Agendapunten:</h3>
         <div id="setup-agenda-list"></div>
 
+
         <button id="btn-start-meeting" style="background: #27ae60; font-size: 1.2em; margin-top: 20px;">Start Vergadering</button>
     </div>
+
 
     <div id="waiting-view" class="hidden">
         <h2>Wachten op presentator...</h2>
         <p>De vergadering is nog niet gestart. Zodra de presentator de agenda heeft samengesteld en de vergadering start, springt dit scherm automatisch over.</p>
     </div>
+
 
     <div id="meeting-view" class="hidden">
         <div class="meeting-controls">
@@ -149,6 +161,7 @@
                 <button id="btn-reset" class="danger hidden">Reset Gehele Database</button>
             </div>
         </div>
+
 
         <!-- Live Bewerken Paneel voor Presentator -->
         <div id="live-agenda-edit-panel" class="hidden" style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ffeeba;">
@@ -166,11 +179,13 @@
             <button id="btn-cancel-live-agenda" class="danger">Annuleren</button>
         </div>
 
+
         <div id="export-content">
             <div class="agenda-header">
                 <h1 id="live-agenda-title">Laden...</h1>
                 <div id="live-agenda-content"></div>
             </div>
+
 
             <div class="split-view">
                 <div class="action-points">
@@ -182,6 +197,7 @@
                     </div>
                 </div>
             </div>
+
 
             <div id="live-board-section" class="board-wrapper hidden">
                 <h3>Interactief Bord</h3>
@@ -195,10 +211,12 @@
                     </div>
                 </div>
 
+
                 <div id="live-board-headers" class="board-headers"></div>
                 <div id="board-container" class="board-container">
                     <!-- Sticky notes & Termen verschijnen hier -->
                 </div>
+
 
                 <div class="sticky-creator" style="margin-top: 15px;">
                     <label>Nieuwe Note toevoegen:</label>
@@ -209,6 +227,7 @@
                         <label><input type="radio" name="note-color" value="#FFADAD"> <span class="color-box color-red"></span> Rood</label>
                         <label><input type="radio" name="note-color" value="custom"> Eigen kleur: <input type="color" id="sticky-custom-color" value="#ffeb3b" style="padding:0; width:30px; height:30px; vertical-align:middle; cursor:pointer;"></label>
                     </div>
+
 
                     <div class="editor-toolbar" style="border-radius: 4px; border-bottom: 1px solid #ccc;">
                         <button type="button" onclick="document.execCommand('bold', false, null)"><b>B</b></button>
@@ -223,9 +242,11 @@
     </div>
 </div>
 
+
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
     import { getDatabase, ref, set, onValue, update, remove, push } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
 
     const firebaseConfig = {
       apiKey: "AIzaSyBj8dXkl1rEfyx54_MDy_tYd2P7kAeU8VQ",
@@ -237,8 +258,10 @@
       appId: "1:8681998187:web:fd08067494a010dc572e2e"
     };
 
+
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
+
 
     let currentRole = null; 
     let localAgenda = [];
@@ -249,12 +272,14 @@
     let offsetY = 0;
     let currentMeetingState = null;
 
+
     function showView(viewId) {
         ['login-view', 'presenter-setup-view', 'waiting-view', 'meeting-view'].forEach(id => {
             document.getElementById(id).classList.add('hidden');
         });
         document.getElementById(viewId).classList.remove('hidden');
     }
+
 
     function updatePresenterUI() {
         if (currentRole === 'presenter') {
@@ -274,11 +299,13 @@
         }
     }
 
+
     document.getElementById('btn-login-presenter').addEventListener('click', () => {
         currentRole = 'presenter';
         showView('presenter-setup-view');
         updatePresenterUI();
     });
+
 
     document.getElementById('btn-login-participant').addEventListener('click', () => {
         currentRole = 'participant';
@@ -286,10 +313,12 @@
         updatePresenterUI();
     });
 
+
     const hasBoardCheckbox = document.getElementById('agenda-has-board');
     hasBoardCheckbox.addEventListener('change', (e) => {
         document.getElementById('board-headers-setup').classList.toggle('hidden', !e.target.checked);
     });
+
 
     document.getElementById('btn-add-agenda').addEventListener('click', () => {
         const title = document.getElementById('agenda-title').value;
@@ -298,9 +327,12 @@
         const headersStr = document.getElementById('board-headers').value;
         const headers = headersStr ? headersStr.split(',').map(s => s.trim()) : [];
 
+
         if (!title) return alert("Vul een titel in.");
 
+
         const agendaItem = { title, content, hasBoard, headers };
+
 
         if (editingSetupIndex !== null) {
             localAgenda[editingSetupIndex] = agendaItem;
@@ -311,9 +343,11 @@
             localAgenda.push(agendaItem);
         }
 
+
         resetSetupForm();
         renderSetupAgendaList();
     });
+
 
     function resetSetupForm() {
         document.getElementById('agenda-title').value = '';
@@ -322,6 +356,7 @@
         document.getElementById('board-headers-setup').classList.add('hidden');
         document.getElementById('board-headers').value = '';
     }
+
 
     function renderSetupAgendaList() {
         const container = document.getElementById('setup-agenda-list');
@@ -350,6 +385,7 @@
                 document.getElementById('btn-cancel-edit-setup').classList.remove('hidden');
             };
 
+
             const delBtn = document.createElement('button');
             delBtn.textContent = 'Verwijderen';
             delBtn.className = 'danger';
@@ -359,6 +395,7 @@
                 renderSetupAgendaList();
             };
 
+
             btnContainer.appendChild(editBtn);
             btnContainer.appendChild(delBtn);
             div.appendChild(titleSpan);
@@ -367,12 +404,14 @@
         });
     }
 
+
     document.getElementById('btn-cancel-edit-setup').addEventListener('click', () => {
         editingSetupIndex = null;
         resetSetupForm();
         document.getElementById('btn-add-agenda').textContent = 'Agendapunt Toevoegen';
         document.getElementById('btn-cancel-edit-setup').classList.add('hidden');
     });
+
 
     document.getElementById('btn-start-meeting').addEventListener('click', () => {
         if (localAgenda.length === 0) return alert("Voeg eerst minimaal 1 agendapunt toe.");
@@ -383,22 +422,27 @@
         });
     });
 
+
     onValue(ref(db, 'meeting'), (snapshot) => {
         const data = snapshot.val();
         currentMeetingState = data;
+
 
         if (!data || !data.isStarted) {
             if (currentRole === 'participant') showView('waiting-view');
             return;
         }
 
+
         if (currentRole) {
             showView('meeting-view');
             updatePresenterUI();
         }
 
+
         const currentIndex = data.currentIndex || 0;
         const currentAgenda = data.agenda ? data.agenda[currentIndex] : null;
+
 
         // Vul de keuzelijst voor de presentator in
         if (data.agenda && currentRole === 'presenter') {
@@ -413,6 +457,7 @@
             });
         }
 
+
         if (currentAgenda) {
             renderMeetingScreen(currentAgenda, currentIndex);
         } else {
@@ -422,9 +467,11 @@
         }
     });
 
+
     function renderMeetingScreen(agendaData, index) {
         document.getElementById('live-agenda-title').innerHTML = agendaData.title;
         document.getElementById('live-agenda-content').innerHTML = agendaData.content;
+
 
         const actionPointsUl = document.getElementById('live-action-points');
         actionPointsUl.innerHTML = '';
@@ -435,6 +482,7 @@
                 actionPointsUl.appendChild(li);
             });
         }
+
 
         const boardSection = document.getElementById('live-board-section');
         if (agendaData.hasBoard) {
@@ -448,11 +496,13 @@
                 headersDiv.appendChild(div);
             });
 
+
             renderBoardItems(agendaData, index);
         } else {
             boardSection.classList.add('hidden');
         }
     }
+
 
     /* Live Bewerken Agendapunten door Presentator */
     document.getElementById('btn-edit-live-agenda').addEventListener('click', () => {
@@ -461,14 +511,17 @@
         const currentAgenda = currentMeetingState.agenda[idx];
         if (!currentAgenda) return;
 
+
         document.getElementById('edit-live-title').value = currentAgenda.title || '';
         document.getElementById('edit-live-content').innerHTML = currentAgenda.content || '';
         document.getElementById('live-agenda-edit-panel').classList.remove('hidden');
     });
 
+
     document.getElementById('btn-cancel-live-agenda').addEventListener('click', () => {
         document.getElementById('live-agenda-edit-panel').classList.add('hidden');
     });
+
 
     document.getElementById('btn-save-live-agenda').addEventListener('click', () => {
         if (!currentMeetingState || currentMeetingState.currentIndex === undefined) return;
@@ -476,7 +529,9 @@
         const newTitle = document.getElementById('edit-live-title').value.trim();
         const newContent = document.getElementById('edit-live-content').innerHTML;
 
+
         if (!newTitle) return alert("Vul een titel in.");
+
 
         update(ref(db, `meeting/agenda/${idx}`), {
             title: newTitle,
@@ -485,6 +540,7 @@
             document.getElementById('live-agenda-edit-panel').classList.add('hidden');
         });
     });
+
 
     document.getElementById('btn-add-action').addEventListener('click', () => {
         const input = document.getElementById('new-action-point');
@@ -495,6 +551,7 @@
             input.value = '';
         }
     });
+
 
     document.getElementById('btn-prev-agenda').addEventListener('click', () => {
         if (currentMeetingState && currentMeetingState.agenda) {
@@ -507,6 +564,7 @@
         }
     });
 
+
     document.getElementById('btn-next-agenda').addEventListener('click', () => {
         if (currentMeetingState && currentMeetingState.agenda) {
             const nextIndex = (currentMeetingState.currentIndex || 0) + 1;
@@ -518,12 +576,14 @@
         }
     });
 
+
     document.getElementById('select-agenda').addEventListener('change', (e) => {
         const newIndex = parseInt(e.target.value, 10);
         if (!isNaN(newIndex)) {
             update(ref(db, 'meeting'), { currentIndex: newIndex });
         }
     });
+
 
     document.getElementById('btn-reset').addEventListener('click', () => {
         if(confirm("WAARSCHUWING: Weet je zeker dat je de GEHELE database wilt leegmaken? Alle data wordt definitief gewist.")) {
@@ -533,6 +593,7 @@
             });
         }
     });
+
 
     document.getElementById('btn-add-term').addEventListener('click', () => {
         const input = document.getElementById('board-term-input');
@@ -548,6 +609,7 @@
         }
     });
 
+
     document.getElementById('btn-add-sticky').addEventListener('click', () => {
         const content = document.getElementById('sticky-content').innerHTML;
         
@@ -556,12 +618,15 @@
             color = document.getElementById('sticky-custom-color').value;
         }
 
+
         if (!content.trim()) return;
+
 
         if (currentMeetingState) {
             const idx = currentMeetingState.currentIndex;
             const startX = Math.floor(Math.random() * 200) + 50; 
             const startY = Math.floor(Math.random() * 150) + 50;
+
 
             push(ref(db, `meeting/agenda/${idx}/stickies`), {
                 content: content,
@@ -573,9 +638,11 @@
         }
     });
 
+
     function renderBoardItems(agendaData, agendaIndex) {
         const container = document.getElementById('board-container');
         container.innerHTML = ''; 
+
 
         const terms = agendaData.boardTerms || {};
         Object.keys(terms).forEach(key => {
@@ -589,13 +656,16 @@
             termDiv.dataset.agendaIndex = agendaIndex;
             termDiv.dataset.type = 'term';
 
+
             if (currentRole === 'presenter') {
                 termDiv.classList.add('draggable');
                 termDiv.addEventListener('mousedown', startDrag);
             }
 
+
             container.appendChild(termDiv);
         });
+
 
         const stickies = agendaData.stickies || {};
         Object.keys(stickies).forEach(key => {
@@ -616,18 +686,22 @@
             };
             noteDiv.appendChild(deleteBtn);
 
+
             const textContainer = document.createElement('div');
             textContainer.innerHTML = noteData.content;
             noteDiv.appendChild(textContainer);
+
 
             noteDiv.dataset.id = key;
             noteDiv.dataset.agendaIndex = agendaIndex;
             noteDiv.dataset.type = 'sticky';
 
+
             noteDiv.addEventListener('mousedown', startDrag);
             container.appendChild(noteDiv);
         });
     }
+
 
     function startDrag(e) {
         if (e.target.closest('.delete-sticky-btn')) return;
@@ -643,6 +717,7 @@
         document.addEventListener('mouseup', endDrag);
     }
 
+
     function drag(e) {
         if (!isDragging || !dragElement) return;
         const containerRect = document.getElementById('board-container').getBoundingClientRect();
@@ -650,12 +725,15 @@
         let newX = e.clientX - containerRect.left - offsetX;
         let newY = e.clientY - containerRect.top - offsetY;
 
+
         newX = Math.max(0, Math.min(newX, containerRect.width - dragElement.offsetWidth));
         newY = Math.max(0, Math.min(newY, containerRect.height - dragElement.offsetHeight));
+
 
         dragElement.style.left = newX + 'px';
         dragElement.style.top = newY + 'px';
     }
+
 
     function endDrag() {
         if (!isDragging || !dragElement) return;
@@ -666,15 +744,19 @@
         const finalX = parseInt(dragElement.style.left, 10);
         const finalY = parseInt(dragElement.style.top, 10);
 
+
         const dbPath = type === 'term' ? 'boardTerms' : 'stickies';
+
 
         update(ref(db, `meeting/agenda/${agendaIndex}/${dbPath}/${id}`), {
             x: finalX,
             y: finalY
         });
 
+
         dragElement.style.zIndex = '';
         if(type === 'term') dragElement.style.zIndex = '10';
+
 
         isDragging = false;
         dragElement = null;
@@ -682,11 +764,13 @@
         document.removeEventListener('mouseup', endDrag);
     }
 
+
     /* DOWNLOAD COMPLETE VERGADERINGS-PDF */
     document.getElementById('btn-download-pdf').addEventListener('click', () => {
         if (!currentMeetingState || !currentMeetingState.agenda || currentMeetingState.agenda.length === 0) {
             return alert("Geen vergaderdata gevonden om te exporteren.");
         }
+
 
         // Tijdelijk container aanmaken voor de volledige PDF
         const fullPdfContainer = document.createElement('div');
@@ -695,7 +779,9 @@
         fullPdfContainer.style.color = '#333';
         fullPdfContainer.style.fontFamily = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
 
+
         const agendaList = currentMeetingState.agenda;
+
 
         agendaList.forEach((agendaItem, idx) => {
             const itemDiv = document.createElement('div');
@@ -705,12 +791,14 @@
             }
             itemDiv.style.marginBottom = '30px';
 
+
             // Agendapunt titel & inhoud
             const headerDiv = document.createElement('div');
             headerDiv.className = 'agenda-header';
             headerDiv.style.cssText = "border-bottom: 2px solid #4A90E2; padding-bottom: 10px; margin-bottom: 20px;";
             headerDiv.innerHTML = `<h1>${idx + 1}. ${agendaItem.title || 'Geen titel'}</h1><div>${agendaItem.content || ''}</div>`;
             itemDiv.appendChild(headerDiv);
+
 
             // Afsprakenlijst
             const actionDiv = document.createElement('div');
@@ -729,6 +817,7 @@
             actionDiv.innerHTML = actionHtml;
             itemDiv.appendChild(actionDiv);
 
+
             // Interactief Bord (indien aanwezig)
             if (agendaItem.hasBoard) {
                 const boardWrapper = document.createElement('div');
@@ -741,9 +830,11 @@
                 });
                 boardHeadersHtml += '</div>';
 
+
                 const boardBox = document.createElement('div');
                 boardBox.className = 'board-container';
                 boardBox.style.cssText = "position: relative; width: 100%; height: 500px; overflow: hidden; background: white; border-radius: 4px; border: 1px solid #eee;";
+
 
                 // Termen toevoegen op het bord
                 if (agendaItem.boardTerms) {
@@ -756,6 +847,7 @@
                     });
                 }
 
+
                 // Sticky Notes toevoegen op het bord
                 if (agendaItem.stickies) {
                     Object.values(agendaItem.stickies).forEach(noteData => {
@@ -767,13 +859,16 @@
                     });
                 }
 
+
                 boardWrapper.innerHTML = '<h3>Interactief Bord</h3>' + boardHeadersHtml;
                 boardWrapper.appendChild(boardBox);
                 itemDiv.appendChild(boardWrapper);
             }
 
+
             fullPdfContainer.appendChild(itemDiv);
         });
+
 
         const opt = {
             margin:       10,
@@ -784,9 +879,12 @@
             pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
         };
 
+
         html2pdf().set(opt).from(fullPdfContainer).save();
     });
+
 
 </script>
 </body>
 </html>
+```[cite: 1]
